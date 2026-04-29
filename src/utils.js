@@ -36,6 +36,22 @@ function splitName(fullName) {
   };
 }
 
+function cleanPersonTitle(value) {
+  let text = normalizeText(value);
+  if (!text) {
+    return "";
+  }
+
+  text = text
+    .replace(/\b\d{1,2}\s+[A-Za-zÀ-ÖØ-öø-ÿ]+\s+\d{4}\b/gi, "")
+    .replace(/\b\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4}\b/gi, "")
+    .replace(/\b(ore\s+\d{1,2}([:.]\d{2})?)\b/gi, "")
+    .replace(/[|\-–—]+\s*$/, "")
+    .replace(/^necrologio\s+di\s+/i, "");
+
+  return normalizeText(text);
+}
+
 function findTown(haystack, configuredTowns) {
   const text = normalizeForMatch(haystack);
   const aliases = {
@@ -70,11 +86,42 @@ function extractDateFromText(text) {
   for (const re of regexes) {
     const match = value.match(re);
     if (match) {
-      return match[1];
+      const candidate = normalizeText(match[1]);
+      if (isPlausibleDate(candidate)) {
+        return candidate;
+      }
     }
   }
 
   return null;
+}
+
+function isPlausibleDate(candidate) {
+  const text = normalizeText(candidate);
+  const slash = text.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})$/);
+  if (slash) {
+    const dd = Number(slash[1]);
+    const mm = Number(slash[2]);
+    let yyyy = Number(slash[3]);
+    if (yyyy < 100) {
+      yyyy += 2000;
+    }
+
+    if (dd < 1 || dd > 31 || mm < 1 || mm > 12) {
+      return false;
+    }
+
+    return yyyy >= 2020 && yyyy <= 2100;
+  }
+
+  const long = text.match(/^(\d{1,2})\s+([A-Za-zÀ-ÖØ-öø-ÿ]+)\s+(\d{4})$/);
+  if (long) {
+    const dd = Number(long[1]);
+    const yyyy = Number(long[3]);
+    return dd >= 1 && dd <= 31 && yyyy >= 2020 && yyyy <= 2100;
+  }
+
+  return false;
 }
 
 function extractFuneralDate(text) {
@@ -147,6 +194,7 @@ module.exports = {
   normalizeForMatch,
   absoluteUrl,
   splitName,
+  cleanPersonTitle,
   findTown,
   extractDateFromText,
   extractFuneralDate,
