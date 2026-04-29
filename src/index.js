@@ -4,6 +4,7 @@ const { scrapeAll, scrapeSource, SOURCES } = require("./scraper");
 const { readData, writeData } = require("./storage");
 const { SHARE_IMAGES_DIR, persistImages } = require("./images");
 const { dateToSortableNumber } = require("./utils");
+const { initMqtt, publishMqttUpdate } = require("./mqtt");
 
 const app = express();
 app.use(express.json());
@@ -19,16 +20,9 @@ function escapeHtml(value) {
 }
 
 function renderSummaryPage(items, updatedAt) {
-  const groupsByTown = new Map();
   const groupsBySourceId = new Map();
   
   for (const item of items) {
-    const townKey = item.paese || "Non specificato";
-    if (!groupsByTown.has(townKey)) {
-      groupsByTown.set(townKey, []);
-    }
-    groupsByTown.get(townKey).push(item);
-    
     const sourceIdKey = item.source_id || "sconosciuta";
     if (!groupsBySourceId.has(sourceIdKey)) {
       groupsBySourceId.set(sourceIdKey, { items: [], label: item.source || "Sconosciuta" });
@@ -44,45 +38,50 @@ function renderSummaryPage(items, updatedAt) {
     )
     .join("\n");
 
-  const sections = Array.from(groupsByTown.entries())
-    .sort((a, b) => a[0].localeCompare(b[0], "it"))
-    .map(([town, townItems]) => {
-      const cards = townItems
-        .map((item) => {
-          const imageSrc = item.foto_api_url
-            ? escapeHtml(item.foto_api_url.replace(/^\/+/, ""))
-            : "";
-          const photo = item.foto_api_url
-            ? `<img src="${imageSrc}" alt="${escapeHtml(item.full_name)}" loading="lazy" />`
-            : `<div class="no-photo">Foto non disponibile</div>`;
+  const sortedItems = [...items].sort(
+    (a, b) => dateToSortableNumber(b.data_funerale) - dateToSortableNumber(a.data_funerale)
+  );
 
-          const date = item.data_funerale ? escapeHtml(item.data_funerale) : "n.d.";
-          const link = item.obituary_url ? `<a href="${escapeHtml(item.obituary_url)}" target="_blank" rel="noreferrer">Apri annuncio</a>` : "";
+  const cards = sortedItems
+    .map((item) => {
+      const imageSrc = item.foto_api_url
+        ? escapeHtml(item.foto_api_url.replace(/^\/+/, ""))
+        : "";
+      const photo = item.foto_api_url
+        ? `<img src="${imageSrc}" alt="${escapeHtml(item.full_name)}" loading="lazy" />`
+        : `<div class="no-photo">Foto non disponibile</div>`;
 
-          return `
-            <article class="card">
-              <div class="media">${photo}</div>
-              <div class="content">
-                <h3>${escapeHtml(item.full_name)}</h3>
-                <p><strong>Paese:</strong> ${escapeHtml(item.paese || "n.d.")}</p>
-                <p><strong>Data funerale:</strong> ${date}</p>
-                <p><strong>Nome:</strong> ${escapeHtml(item.nome || "")}</p>
-                <p><strong>Cognome:</strong> ${escapeHtml(item.cognome || "")}</p>
-                ${link}
-              </div>
-            </article>
-          `;
-        })
-        .join("\n");
+      const date = item.data_funerale ? escapeHtml(item.data_funerale) : "n.d.";
+      const parenti = item.parenti ? `<p><strong>Parenti:</strong> ${escapeHtml(item.parenti)}</p>` : "";
+      const luogoFunerale = item.luogo_funerale ? `<p><strong>Luogo funerale:</strong> ${escapeHtml(item.luogo_funerale)}</p>` : "";
+      const rosario = item.rosario ? `<p><strong>Rosario:</strong> ${escapeHtml(item.rosario)}</p>` : "";
+      const link = item.obituary_url ? `<a href="${escapeHtml(item.obituary_url)}" target="_blank" rel="noreferrer">Apri annuncio</a>` : "";
 
       return `
-        <section>
-          <h2>${escapeHtml(town)} <span>${townItems.length}</span></h2>
-          <div class="grid">${cards}</div>
-        </section>
+        <article class="card">
+          <div class="media">${photo}</div>
+          <div class="content">
+            <h3>${escapeHtml(item.full_name)}</h3>
+            <p><strong>Data funerale:</strong> ${date}</p>
+            <p><strong>Paese:</strong> ${escapeHtml(item.paese || "n.d.")}</p>
+            <p><strong>Nome:</strong> ${escapeHtml(item.nome || "")}</p>
+            <p><strong>Cognome:</strong> ${escapeHtml(item.cognome || "")}</p>
+            ${parenti}
+            ${luogoFunerale}
+            ${rosario}
+            ${link}
+          </div>
+        </article>
       `;
     })
     .join("\n");
+
+  const sections = `
+    <section>
+      <h2>Epigrafi per data <span>${sortedItems.length}</span></h2>
+      <div class="grid">${cards}</div>
+    </section>
+  `;
 
   return `<!doctype html>
 <html lang="it">
@@ -429,6 +428,11 @@ let state = {
 
 const config = loadConfig();
 
+function getNewItems(previousItems, currentItems) {
+  const oldIds = new Set((previousItems || []).map((x) => x.id));
+  return (currentItems || []).filter((x) => x && x.id && !oldIds.has(x.id));
+}
+
 async function refreshData() {
   if (state.running) {
     return { skipped: true, reason: "already_running" };
@@ -438,6 +442,7 @@ async function refreshData() {
   state.lastError = null;
 
   try {
+    const previousItems = state.items;
     let items = await scrapeAll(config);
 
     if (config.save_images) {
@@ -447,6 +452,12 @@ async function refreshData() {
     state.items = items;
     state.lastUpdate = new Date().toISOString();
     writeData(items);
+    await publishMqttUpdate({
+      config,
+      items: state.items,
+      updatedAt: state.lastUpdate,
+      newItems: getNewItems(previousItems, state.items),
+    });
     console.log(`[refresh] Completato: ${items.length} necrologi utili`);
     return { skipped: false, count: items.length };
   } catch (error) {
@@ -468,6 +479,7 @@ async function refreshSource(sourceId) {
   state.lastError = null;
 
   try {
+    const previousItems = state.items;
     let sourceItems = await scrapeSource(source, config);
 
     if (config.save_images) {
@@ -486,6 +498,12 @@ async function refreshSource(sourceId) {
     state.items = merged;
     state.lastUpdate = new Date().toISOString();
     writeData(merged);
+    await publishMqttUpdate({
+      config,
+      items: state.items,
+      updatedAt: state.lastUpdate,
+      newItems: getNewItems(previousItems, state.items),
+    });
     console.log(`[refresh-source] ${source.label}: ${sourceItems.length} necrologi trovati`);
     return { ok: true, count: sourceItems.length, source: source.label };
   } catch (error) {
@@ -590,6 +608,7 @@ app.get("/refresh-source-stream/:sourceId", (req, res) => {
 
   (async () => {
     try {
+      const previousItems = state.items;
       sendEvent("start", { source: source.label, status: "Inizio scansione..." });
 
       let sourceItems = await scrapeSource(source, config, (progress) => {
@@ -622,6 +641,12 @@ app.get("/refresh-source-stream/:sourceId", (req, res) => {
       state.items = merged;
       state.lastUpdate = new Date().toISOString();
       writeData(merged);
+      await publishMqttUpdate({
+        config,
+        items: state.items,
+        updatedAt: state.lastUpdate,
+        newItems: getNewItems(previousItems, state.items),
+      });
 
       sendEvent("complete", {
         ok: true,
@@ -647,6 +672,7 @@ app.get("/refresh-source-stream/:sourceId", (req, res) => {
 
 app.listen(config.listen_port, async () => {
   console.log(`[server] Necrologi add-on in ascolto su porta ${config.listen_port}`);
+  await initMqtt(config);
   await refreshData();
   const intervalMs = Math.max(10, Number(config.scan_interval_minutes || 60)) * 60 * 1000;
   setInterval(refreshData, intervalMs);

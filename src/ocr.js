@@ -1,6 +1,22 @@
 const axios = require("axios");
+const fs = require("fs");
+const path = require("path");
 const Tesseract = require("tesseract.js");
 const { normalizeText, findTown, extractFuneralDate } = require("./utils");
+
+function ensureTesseractWordFiles() {
+  // Alcune build cercano questi file nella cwd (es. ./ita.special-words)
+  // Se non presenti, Tesseract può loggare errori rumorosi.
+  const cwd = process.cwd();
+  const files = ["ita.special-words", "eng.special-words"];
+
+  for (const file of files) {
+    const fullPath = path.join(cwd, file);
+    if (!fs.existsSync(fullPath)) {
+      fs.writeFileSync(fullPath, "", "utf8");
+    }
+  }
+}
 
 function isLikelyImageUrl(url) {
   const value = (url || "").toLowerCase();
@@ -31,9 +47,19 @@ async function runOcrFromImage(imageUrl, towns) {
     },
   });
 
-  const result = await Tesseract.recognize(Buffer.from(response.data), "ita+eng", {
-    logger: () => {},
-  });
+  ensureTesseractWordFiles();
+
+  let result;
+  try {
+    result = await Tesseract.recognize(Buffer.from(response.data), "ita+eng", {
+      logger: () => {},
+    });
+  } catch (error) {
+    console.warn(`[ocr] Tesseract fallback su eng: ${error.message}`);
+    result = await Tesseract.recognize(Buffer.from(response.data), "eng", {
+      logger: () => {},
+    });
+  }
 
   const text = normalizeText(result?.data?.text || "");
   const town = findTown(text, towns);

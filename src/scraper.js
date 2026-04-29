@@ -11,6 +11,7 @@ const {
   dateToSortableNumber,
 } = require("./utils");
 const { runOcrFromImage } = require("./ocr");
+const { extractAnnouncementDetails } = require("./ai_extraction");
 
 const SOURCES = [
   {
@@ -49,6 +50,30 @@ const SOURCES = [
     listUrl: "https://www.onoranzefunebrizanette.it/necrologi-cordogli-online-cordignano",
     type: "zanette",
   },
+  {
+    id: "salamon",
+    label: "Pompe Funebri Salamon",
+    listUrl: "https://www.pompefunebrisalamon.com/condoglianze-online/",
+    type: "salamon",
+  },
+  {
+    id: "lapace_conegliano",
+    label: "Onoranze Funebri La Pace Conegliano",
+    listUrl: "https://www.onoranzefunebrilapaceconegliano.com/annunci-funebri/",
+    type: "lapace",
+  },
+  {
+    id: "zanardo",
+    label: "Agenzia Funebre Zanardo",
+    listUrl: "https://www.agenziafunebrezanardo.it/condoglianze-online/",
+    type: "zanardo",
+  },
+  {
+    id: "roman",
+    label: "Onoranze Funebri Roman",
+    listUrl: "https://www.ofroman.com/lista-annunci-db.php",
+    type: "roman",
+  },
 ];
 
 async function fetchHtml(url) {
@@ -75,7 +100,15 @@ function parseListing($, source, maxItems) {
   const entries = [];
   const seen = new Set();
 
-  function push(link, title, listDateHint) {
+  function extractBackgroundImageUrl(styleValue) {
+    if (!styleValue) {
+      return null;
+    }
+    const match = String(styleValue).match(/background-image\s*:\s*url\((['"]?)(.*?)\1\)/i);
+    return match ? normalizeText(match[2]) : null;
+  }
+
+  function push(link, title, listDateHint, listImageUrl) {
     const url = absoluteUrl(source.listUrl, link);
     const cleanTitle = normalizeText(title);
     if (!url || !cleanTitle) {
@@ -89,6 +122,7 @@ function parseListing($, source, maxItems) {
       url,
       title: cleanTitle,
       listDateHint: normalizeText(listDateHint),
+      listImageUrl: listImageUrl ? absoluteUrl(source.listUrl, listImageUrl) : null,
     });
   }
 
@@ -178,7 +212,7 @@ function parseListing($, source, maxItems) {
   }
 
   if (source.type === "zanette") {
-    $("a[href*='onoranzefunebrizanette.it/']").each((_, el) => {
+    $(".postArticle a[href], a[data-blog-post-alias][href]").each((_, el) => {
       const href = $(el).attr("href");
       const title = normalizeText($(el).text());
       if (!href || !title) {
@@ -197,7 +231,102 @@ function parseListing($, source, maxItems) {
         return;
       }
 
+      const card = $(el).closest(".postArticle, article, li, div");
+      const parentText = normalizeText(card.text());
+      const dateHint = extractDateFromText(parentText);
+      const styleImage = extractBackgroundImageUrl(card.find(".blogImg").first().attr("style"));
+      const imgSrc = card.find(".blogImg img").first().attr("src");
+      push(href, title, dateHint, styleImage || imgSrc || null);
+    });
+  }
+
+  if (source.type === "salamon") {
+    $("h3 a[href*='/condoglianze-online/'], h2 a[href*='/condoglianze-online/']").each((_, el) => {
+      const href = $(el).attr("href");
+      const title = normalizeText($(el).text());
+      if (!href || !title) {
+        return;
+      }
+      if (isNoiseTitle(title)) {
+        return;
+      }
+      if (title.split(" ").length < 2) {
+        return;
+      }
+      if (/\/condoglianze-online\/?$/i.test(href)) {
+        return;
+      }
+
       const parentText = normalizeText($(el).closest("article, li, div").text());
+      const dateHint = extractDateFromText(parentText);
+      push(href, title, dateHint);
+    });
+  }
+
+  if (source.type === "lapace") {
+    $("h2 a[href*='/annuncio/'], h3 a[href*='/annuncio/']").each((_, el) => {
+      const href = $(el).attr("href");
+      const title = normalizeText($(el).text());
+      if (!href || !title) {
+        return;
+      }
+      if (isNoiseTitle(title)) {
+        return;
+      }
+      if (title.split(" ").length < 2) {
+        return;
+      }
+      if (/\/annunci-funebri\/?$/i.test(href)) {
+        return;
+      }
+      if (/\/privacy|\/cookie|\/contatti|\/servizi|\/storie-di-vita|\/socrem-tv/i.test(href)) {
+        return;
+      }
+
+      const parentText = normalizeText($(el).closest("article, li, div").text());
+      const dateHint = extractDateFromText(parentText);
+      push(href, title, dateHint);
+    });
+  }
+
+  if (source.type === "zanardo") {
+    $("h3 a[href*='/condoglianze-online/'], h2 a[href*='/condoglianze-online/']").each((_, el) => {
+      const href = $(el).attr("href");
+      const title = normalizeText($(el).text());
+      if (!href || !title) {
+        return;
+      }
+      if (isNoiseTitle(title)) {
+        return;
+      }
+      if (title.split(" ").length < 2) {
+        return;
+      }
+      if (/\/condoglianze-online\/?$/i.test(href)) {
+        return;
+      }
+
+      const parentText = normalizeText($(el).closest("article, li, div").text());
+      const dateHint = extractDateFromText(parentText);
+      push(href, title, dateHint);
+    });
+  }
+
+  if (source.type === "roman") {
+    $("a[href*='annuncio-db.php?uuid=']").each((_, el) => {
+      const href = $(el).attr("href");
+      const title = normalizeText($(el).text());
+      if (!href || !title) {
+        return;
+      }
+      if (title.split(" ").length < 2) {
+        return;
+      }
+      if (isNoiseTitle(title)) {
+        return;
+      }
+
+      const parentText = normalizeText($(el).closest("article, li, div, section").text());
       const dateHint = extractDateFromText(parentText);
       push(href, title, dateHint);
     });
@@ -218,7 +347,15 @@ function extractBestTitle($, fallback) {
   return candidates[0] || fallback || "";
 }
 
-function extractImage($) {
+function extractImage($, preferLinkedJpg) {
+  // Per siti come Salvador l'epigrafe è un link <a href="...jpg">, non un <img>
+  if (preferLinkedJpg) {
+    const linkedJpg = $("a[href]").filter((_, el) => /\.(jpg|jpeg|png|webp)(\?.*)?$/i.test($(el).attr("href") || "")).first().attr("href");
+    if (linkedJpg) {
+      return linkedJpg;
+    }
+  }
+
   const candidates = [
     $("meta[property='og:image']").attr("content"),
     $("article img").first().attr("src"),
@@ -229,7 +366,7 @@ function extractImage($) {
   return candidates[0] || null;
 }
 
-async function scrapeDetail(entry, source, options, ocrState) {
+async function scrapeDetail(entry, source, options, ocrState, aiState) {
   try {
     const html = await fetchHtml(entry.url);
     const $ = cheerio.load(html);
@@ -239,7 +376,17 @@ async function scrapeDetail(entry, source, options, ocrState) {
     if (isNoiseTitle(personTitle || title)) {
       return null;
     }
-    const imageUrl = absoluteUrl(entry.url, extractImage($));
+    const detailImageUrl = absoluteUrl(
+      entry.url,
+      extractImage(
+        $,
+        source.id === "servizi_salvador" ||
+          source.id === "salamon" ||
+          source.id === "lapace_conegliano" ||
+          source.id === "zanardo"
+      )
+    );
+    const imageUrl = entry.listImageUrl || detailImageUrl;
     const bodyText = normalizeText($("article, main, .post, .entry-content, body").first().text());
     const contextText = `${personTitle || title} ${bodyText}`;
     let town = findTown(contextText, options.towns);
@@ -249,9 +396,17 @@ async function scrapeDetail(entry, source, options, ocrState) {
         ? (entry.listDateHint || extractFuneralDate(bodyText) || null)
         : (extractFuneralDate(bodyText) || entry.listDateHint || null);
 
+    const ocrEligibleSource =
+      source.id === "ultimoviaggio" ||
+      source.id === "zanette" ||
+      source.id === "servizi_salvador" ||
+      source.id === "salamon" ||
+      source.id === "lapace_conegliano" ||
+      source.id === "zanardo" ||
+      source.id === "roman";
     const mustRunOcr =
       options.enable_ocr &&
-      source.id === "ultimoviaggio" &&
+      ocrEligibleSource &&
       ocrState.used < options.ocr_max_items_per_run &&
       (!options.ocr_only_when_missing || !town || !funeralDate);
 
@@ -282,8 +437,18 @@ async function scrapeDetail(entry, source, options, ocrState) {
       return null;
     }
 
+    // AI chiamata DOPO il filtro paese: non spreca budget su item che verranno scartati
+    const extracted = await extractAnnouncementDetails(bodyText, options, aiState);
+    if (!funeralDate && extracted.data_funerale) {
+      funeralDate = extracted.data_funerale;
+    }
+
     const finalTitle = personTitle || title;
-    const { nome, cognome } = splitName(finalTitle.replace(/\s+-\s+.*$/, ""));
+    const split = splitName(finalTitle.replace(/\s+-\s+.*$/, ""));
+    // Zanette pubblica "Cognome Nome", quindi invertiamo
+    const { nome, cognome } = source.id === "zanette"
+      ? { nome: split.cognome, cognome: split.nome }
+      : split;
 
     return {
       id: `${source.id}:${entry.url}`,
@@ -297,6 +462,11 @@ async function scrapeDetail(entry, source, options, ocrState) {
       foto: imageUrl,
       paese: town,
       data_funerale: funeralDate,
+      anni: extracted.anni || null,
+      parenti: extracted.parenti,
+      luogo_funerale: extracted.luogo_funerale,
+      rosario: extracted.rosario,
+      ai_used: extracted.ai_used,
       ocr_used: ocrUsed,
       ocr_confidence: ocrConfidence,
       scraped_at: new Date().toISOString(),
@@ -313,11 +483,12 @@ async function scrapeSource(source, options, onProgress) {
     const $ = cheerio.load(html);
     const entries = parseListing($, source, options.max_items_per_source);
     const ocrState = { used: 0 };
+    const aiState = { used: 0 };
 
     const results = [];
     for (let i = 0; i < entries.length; i++) {
       const entry = entries[i];
-      const detail = await scrapeDetail(entry, source, options, ocrState);
+      const detail = await scrapeDetail(entry, source, options, ocrState, aiState);
       if (detail) {
         results.push(detail);
       }

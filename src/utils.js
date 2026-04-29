@@ -12,8 +12,16 @@ function normalizeForMatch(value) {
 }
 
 function absoluteUrl(base, maybeRelative) {
+  if (!maybeRelative) {
+    return null;
+  }
   try {
-    return new URL(maybeRelative, base).toString();
+    const result = new URL(maybeRelative, base).toString();
+    // Scarta URL che contengono letteralmente 'undefined' o 'null'
+    if (/\/undefined$|\/null$/.test(result)) {
+      return null;
+    }
+    return result;
   } catch {
     return null;
   }

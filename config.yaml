@@ -1,14 +1,14 @@
 name: Necrologi Zona TV
 slug: necrologi_zona_tv
-version: "0.1.2"
+version: "0.1.6"
 description: Raccoglie necrologi per Orsago, Cordignano, Godega, San Fior e li espone via API.
-url: https://github.com/example/necrologi-addon
+url: https://github.com/diegobattistuzzi/necrologio
 startup: services
 boot: auto
 init: false
 ingress: true
 ingress_port: 8099
-panel_icon: mdi:book-open-page-variant
+panel_icon: mdi:cross
 panel_title: Necrologi Zona TV
 arch:
   - aarch64
@@ -27,11 +27,29 @@ options:
   enable_ocr: false
   ocr_only_when_missing: true
   ocr_max_items_per_run: 20
+  mqtt_enabled: false
+  mqtt_url: mqtt://core-mosquitto:1883
+  mqtt_username: ""
+  mqtt_password: ""
+  mqtt_base_topic: necrologi_zona_tv
+  mqtt_discovery_prefix: homeassistant
+  enable_ai_extraction: false
+  ai_agent_id: ""
+  ai_only_when_missing: true
+  ai_max_items_per_run: 20
+  ai_timeout_ms: 15000
+  ha_api_url: http://supervisor/core/api
   towns:
     - Orsago
     - Cordignano
     - Godega
     - San Fior
+    - Mareno di Piave
+    - Vazzola
+    - Conegliano
+    - San Vendemiano
+    - Santa Lucia di Piave
+    - Codogne
   log_level: info
 schema:
   scan_interval_minutes: int(10,1440)
@@ -40,6 +58,18 @@ schema:
   enable_ocr: bool
   ocr_only_when_missing: bool
   ocr_max_items_per_run: int(1,100)
+  mqtt_enabled: bool
+  mqtt_url: str
+  mqtt_username: str?
+  mqtt_password: password?
+  mqtt_base_topic: str
+  mqtt_discovery_prefix: str
+  enable_ai_extraction: bool
+  ai_agent_id: str?
+  ai_only_when_missing: bool
+  ai_max_items_per_run: int(1,100)
+  ai_timeout_ms: int(3000,60000)
+  ha_api_url: str
   towns:
     - str
   log_level: list(trace|debug|info|warn|error)
