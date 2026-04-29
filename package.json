@@ -1,0 +1,15 @@
+{
+  "name": "ha-necrologi-zona-tv",
+  "version": "0.1.0",
+  "description": "Home Assistant add-on per scraping necrologi zona Orsago/Cordignano/Godega/San Fior",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "axios": "^1.9.0",
+    "cheerio": "^1.0.0",
+    "express": "^4.21.2"
+  }
+}
