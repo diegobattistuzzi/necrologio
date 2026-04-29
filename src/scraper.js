@@ -9,6 +9,7 @@ const {
   extractDateFromText,
   extractFuneralDate,
   dateToSortableNumber,
+  isOlderThanDays,
 } = require("./utils");
 const { runOcrFromImage } = require("./ocr");
 const { extractAnnouncementDetails } = require("./ai_extraction");
@@ -93,7 +94,7 @@ function isNoiseTitle(title) {
     return true;
   }
 
-  return /(onoranze funebri|annunci funebri|necrologi|contattaci|servizi|privacy|cookie|casa funeraria|powered by|leggi di piu|carica di piu)/i.test(text);
+  return /(onoranze funebri|annunci funebri|necrologi|cordoglio online|condoglianze online|contattaci|servizi|privacy|cookie|casa funeraria|powered by|leggi di piu|carica di piu|storie di vita|storia di vita|store di vita)/i.test(text);
 }
 
 function parseListing($, source, maxItems) {
@@ -366,13 +367,66 @@ function extractImage($, preferLinkedJpg) {
   return candidates[0] || null;
 }
 
+function extractDetailBodyText($, source) {
+  if (source.id === "memorial") {
+    const memorialText = normalizeText(
+      $("#obituary-details").children().text() + " " + $("#service-details").children().text()
+    );
+    if (memorialText) {
+      return memorialText;
+    }
+  }
+
+  if (source.id === "san_osvaldo") {
+    const bodyText = normalizeText($("article, main, .post, .entry-content, body").first().text());
+    const cutoffMatch = bodyText.match(/^(.*?)(?:\bO\.?F\.?\s*S\.?\s*Osvaldo\b)/i);
+    if (cutoffMatch && cutoffMatch[1]) {
+      return normalizeText(cutoffMatch[1]);
+    }
+    return bodyText;
+  }
+
+  return normalizeText($("article, main, .post, .entry-content, body").first().text());
+}
+
+function toTitleCase(value) {
+  return normalizeText(value)
+    .split(" ")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+}
+
+function deriveNameFromObituaryUrl(url) {
+  try {
+    const pathname = new URL(url).pathname;
+    const segments = pathname.split("/").filter(Boolean);
+    const slug = decodeURIComponent(segments[segments.length - 1] || "");
+    const clean = normalizeText(slug.replace(/[\-_]+/g, " "));
+    if (!clean || clean.split(" ").length < 2) {
+      return "";
+    }
+    return toTitleCase(clean);
+  } catch {
+    return "";
+  }
+}
+
 async function scrapeDetail(entry, source, options, ocrState, aiState) {
   try {
     const html = await fetchHtml(entry.url);
     const $ = cheerio.load(html);
 
-    const title = extractBestTitle($, entry.title);
-    const personTitle = cleanPersonTitle(title);
+    const extractedTitle = extractBestTitle($, entry.title);
+    const title = isNoiseTitle(extractedTitle) ? normalizeText(entry.title) : extractedTitle;
+    let personTitle = cleanPersonTitle(title);
+    if (!personTitle || isNoiseTitle(personTitle)) {
+      const fallbackFromUrl = deriveNameFromObituaryUrl(entry.url);
+      if (fallbackFromUrl) {
+        personTitle = cleanPersonTitle(fallbackFromUrl);
+      }
+    }
+
     if (isNoiseTitle(personTitle || title)) {
       return null;
     }
@@ -387,7 +441,7 @@ async function scrapeDetail(entry, source, options, ocrState, aiState) {
       )
     );
     const imageUrl = entry.listImageUrl || detailImageUrl;
-    const bodyText = normalizeText($("article, main, .post, .entry-content, body").first().text());
+    const bodyText = extractDetailBodyText($, source);
     const contextText = `${personTitle || title} ${bodyText}`;
     let town = findTown(contextText, options.towns);
 
@@ -412,6 +466,7 @@ async function scrapeDetail(entry, source, options, ocrState, aiState) {
 
     let ocrUsed = false;
     let ocrConfidence = null;
+    let ocrText = "";
 
     if (mustRunOcr) {
       try {
@@ -420,6 +475,7 @@ async function scrapeDetail(entry, source, options, ocrState, aiState) {
           ocrState.used += 1;
           ocrUsed = true;
           ocrConfidence = ocr.confidence;
+          ocrText = normalizeText(ocr.text || "");
         }
 
         if (!town && ocr.town) {
@@ -438,7 +494,13 @@ async function scrapeDetail(entry, source, options, ocrState, aiState) {
     }
 
     // AI chiamata DOPO il filtro paese: non spreca budget su item che verranno scartati
-    const extracted = await extractAnnouncementDetails(bodyText, options, aiState);
+    const aiInputText = ocrUsed && ocrText ? ocrText : bodyText;
+    if (!aiInputText) {
+      console.debug(`[ai] Chiamata evitata: input_vuoto | source=${source.id} url=${entry.url}`);
+    }
+    const extracted = aiInputText
+      ? await extractAnnouncementDetails(aiInputText, options, aiState)
+      : { ai_used: false };
     if (!funeralDate && extracted.data_funerale) {
       funeralDate = extracted.data_funerale;
     }
@@ -449,6 +511,11 @@ async function scrapeDetail(entry, source, options, ocrState, aiState) {
     const { nome, cognome } = source.id === "zanette"
       ? { nome: split.cognome, cognome: split.nome }
       : split;
+
+    const hiddenOld = Boolean(funeralDate && isOlderThanDays(funeralDate, 10));
+    if (hiddenOld) {
+      console.info(`[scraper] Nascosto per data vecchia (>10 giorni): source=${source.id} title=${finalTitle} data_funerale=${funeralDate}`);
+    }
 
     return {
       id: `${source.id}:${entry.url}`,
@@ -469,6 +536,7 @@ async function scrapeDetail(entry, source, options, ocrState, aiState) {
       ai_used: extracted.ai_used,
       ocr_used: ocrUsed,
       ocr_confidence: ocrConfidence,
+      hidden_old: hiddenOld,
       scraped_at: new Date().toISOString(),
     };
   } catch (error) {
@@ -477,18 +545,60 @@ async function scrapeDetail(entry, source, options, ocrState, aiState) {
   }
 }
 
-async function scrapeSource(source, options, onProgress) {
+function buildExistingItemsMap(items, sourceId) {
+  const map = new Map();
+  for (const item of items || []) {
+    if (!item || !item.id) {
+      continue;
+    }
+    if (sourceId && item.source_id !== sourceId) {
+      continue;
+    }
+    map.set(item.id, item);
+  }
+  return map;
+}
+
+async function scrapeSource(source, options, onProgress, existingItems) {
   try {
     const html = await fetchHtml(source.listUrl);
     const $ = cheerio.load(html);
     const entries = parseListing($, source, options.max_items_per_source);
     const ocrState = { used: 0 };
     const aiState = { used: 0 };
+    const existingMap = buildExistingItemsMap(existingItems, source.id);
 
     const results = [];
     for (let i = 0; i < entries.length; i++) {
       const entry = entries[i];
-      const detail = await scrapeDetail(entry, source, options, ocrState, aiState);
+      const entryId = `${source.id}:${entry.url}`;
+      const existingItem = existingMap.get(entryId);
+      let detail = null;
+
+      if (existingItem) {
+        const existingNameIsNoisy = isNoiseTitle(existingItem.full_name || "");
+        const shouldReprocessExisting =
+          source.id === "lapace_conegliano" &&
+          (existingNameIsNoisy || !existingItem.nome || !existingItem.cognome);
+
+        if (shouldReprocessExisting) {
+          detail = await scrapeDetail(entry, source, options, ocrState, aiState);
+        } else {
+        const hiddenOld = Boolean(existingItem.data_funerale && isOlderThanDays(existingItem.data_funerale, 10));
+        if (hiddenOld) {
+          console.info(`[scraper] Nascosto da cache per data vecchia (>10 giorni): source=${source.id} title=${existingItem.full_name || entry.title} data_funerale=${existingItem.data_funerale}`);
+        } else {
+          console.debug(`[scraper] Riutilizzato da cache senza riprocessare/OCR: source=${source.id} title=${existingItem.full_name || entry.title}`);
+        }
+        detail = {
+          ...existingItem,
+          hidden_old: hiddenOld,
+        };
+        }
+      } else {
+        detail = await scrapeDetail(entry, source, options, ocrState, aiState);
+      }
+
       if (detail) {
         results.push(detail);
       }
@@ -513,8 +623,10 @@ async function scrapeSource(source, options, onProgress) {
 async function scrapeAll(options) {
   const all = [];
 
+  const existingItems = options.existingItems || [];
+
   for (const source of SOURCES) {
-    const data = await scrapeSource(source, options);
+    const data = await scrapeSource(source, options, null, existingItems);
     all.push(...data);
   }
 

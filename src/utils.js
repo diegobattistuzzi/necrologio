@@ -138,15 +138,47 @@ function extractFuneralDate(text) {
     return null;
   }
 
+  const dateRegex =
+    /(\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4}|\d{1,2}\s+[A-Za-zÀ-ÖØ-öø-ÿ]+\s+\d{4})/i;
+  const funeralContextRegex = /(funeral[ei]|esequie|cerimonia(?:\s+funebre)?|rosario|rito funebre)/i;
+  const noisyContextRegex = /(pubblicat[oa]|aggiornat[oa]|copyright|cookie|privacy)/i;
+
   const funeralSentence = value.match(
-    /(funeral[ei]|esequie|cerimonia|rosario)[^.\n]{0,140}(\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4}|\d{1,2}\s+[A-Za-zÀ-ÖØ-öø-ÿ]+\s+\d{4})/i
+    /(funeral[ei]|esequie|cerimonia(?:\s+funebre)?|rosario|rito funebre)[^.\n]{0,180}(\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4}|\d{1,2}\s+[A-Za-zÀ-ÖØ-öø-ÿ]+\s+\d{4})/i
   );
 
   if (funeralSentence) {
-    return funeralSentence[2];
+    const candidate = normalizeText(funeralSentence[2]);
+    return isPlausibleDate(candidate) ? candidate : null;
   }
 
-  return extractDateFromText(value);
+  const dateBeforeContext = value.match(
+    /(\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4}|\d{1,2}\s+[A-Za-zÀ-ÖØ-öø-ÿ]+\s+\d{4})[^.\n]{0,120}(funeral[ei]|esequie|cerimonia(?:\s+funebre)?|rosario|rito funebre)/i
+  );
+  if (dateBeforeContext) {
+    const candidate = normalizeText(dateBeforeContext[1]);
+    return isPlausibleDate(candidate) ? candidate : null;
+  }
+
+  // Ultimo fallback: cerca date in finestre testuali che contengono riferimenti espliciti al funerale.
+  const globalDateRegex = new RegExp(dateRegex.source, "gi");
+  let match;
+  while ((match = globalDateRegex.exec(value)) !== null) {
+    const candidate = normalizeText(match[1]);
+    if (!isPlausibleDate(candidate)) {
+      continue;
+    }
+
+    const start = Math.max(0, match.index - 140);
+    const end = Math.min(value.length, globalDateRegex.lastIndex + 140);
+    const context = value.slice(start, end);
+
+    if (funeralContextRegex.test(context) && !noisyContextRegex.test(context)) {
+      return candidate;
+    }
+  }
+
+  return null;
 }
 
 function dateToSortableNumber(value) {
@@ -197,6 +229,75 @@ function dateToSortableNumber(value) {
   return 0;
 }
 
+function parseDateValue(value) {
+  const text = normalizeText(value);
+  if (!text) {
+    return null;
+  }
+
+  const slash = text.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})$/);
+  if (slash) {
+    const dd = Number(slash[1]);
+    const mm = Number(slash[2]);
+    let yyyy = Number(slash[3]);
+    if (yyyy < 100) {
+      yyyy += 2000;
+    }
+
+    const parsed = new Date(yyyy, mm - 1, dd);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  const monthMap = {
+    gennaio: 1,
+    febbraio: 2,
+    marzo: 3,
+    aprile: 4,
+    maggio: 5,
+    giugno: 6,
+    luglio: 7,
+    agosto: 8,
+    settembre: 9,
+    ottobre: 10,
+    novembre: 11,
+    dicembre: 12,
+  };
+
+  const longForm = text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .match(/^(\d{1,2})\s+([a-z]+)\s+(\d{4})$/);
+
+  if (!longForm) {
+    return null;
+  }
+
+  const dd = Number(longForm[1]);
+  const mm = monthMap[longForm[2]] || 0;
+  const yyyy = Number(longForm[3]);
+  if (!mm) {
+    return null;
+  }
+
+  const parsed = new Date(yyyy, mm - 1, dd);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function isOlderThanDays(value, days) {
+  const parsed = parseDateValue(value);
+  if (!parsed) {
+    return false;
+  }
+
+  const today = new Date();
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const threshold = new Date(startOfToday);
+  threshold.setDate(threshold.getDate() - Number(days || 0));
+
+  return parsed < threshold;
+}
+
 module.exports = {
   normalizeText,
   normalizeForMatch,
@@ -207,4 +308,6 @@ module.exports = {
   extractDateFromText,
   extractFuneralDate,
   dateToSortableNumber,
+  parseDateValue,
+  isOlderThanDays,
 };

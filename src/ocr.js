@@ -5,15 +5,28 @@ const Tesseract = require("tesseract.js");
 const { normalizeText, findTown, extractFuneralDate } = require("./utils");
 
 function ensureTesseractWordFiles() {
-  // Alcune build cercano questi file nella cwd (es. ./ita.special-words)
-  // Se non presenti, Tesseract può loggare errori rumorosi.
-  const cwd = process.cwd();
-  const files = ["ita.special-words", "eng.special-words"];
+  // Alcune build cercano questi file in directory diverse (cwd/app/src).
+  // Se non presenti, Tesseract logga warning rumorosi anche se l'OCR continua a funzionare.
+  const candidateDirs = Array.from(
+    new Set([process.cwd(), __dirname, path.resolve(__dirname, "..")].filter(Boolean))
+  );
+  const files = [
+    "ita.special-words",
+    "eng.special-words",
+    "ita.user-words",
+    "eng.user-words",
+  ];
 
-  for (const file of files) {
-    const fullPath = path.join(cwd, file);
-    if (!fs.existsSync(fullPath)) {
-      fs.writeFileSync(fullPath, "", "utf8");
+  for (const dir of candidateDirs) {
+    for (const file of files) {
+      const fullPath = path.join(dir, file);
+      try {
+        if (!fs.existsSync(fullPath)) {
+          fs.writeFileSync(fullPath, "", "utf8");
+        }
+      } catch (error) {
+        console.debug(`[ocr] Impossibile preparare ${fullPath}: ${error.message}`);
+      }
     }
   }
 }

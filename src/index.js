@@ -19,7 +19,7 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
-function renderSummaryPage(items, updatedAt) {
+function renderSummaryPage(items, updatedAt, includeHidden, hiddenCount) {
   const groupsBySourceId = new Map();
   
   for (const item of items) {
@@ -52,17 +52,21 @@ function renderSummaryPage(items, updatedAt) {
         : `<div class="no-photo">Foto non disponibile</div>`;
 
       const date = item.data_funerale ? escapeHtml(item.data_funerale) : "n.d.";
+      const age = Number.isFinite(Number(item.anni)) ? String(Number(item.anni)) : "n.d.";
       const parenti = item.parenti ? `<p><strong>Parenti:</strong> ${escapeHtml(item.parenti)}</p>` : "";
       const luogoFunerale = item.luogo_funerale ? `<p><strong>Luogo funerale:</strong> ${escapeHtml(item.luogo_funerale)}</p>` : "";
       const rosario = item.rosario ? `<p><strong>Rosario:</strong> ${escapeHtml(item.rosario)}</p>` : "";
       const link = item.obituary_url ? `<a href="${escapeHtml(item.obituary_url)}" target="_blank" rel="noreferrer">Apri annuncio</a>` : "";
+      const sourceBadge = `<div class="source-badge">${escapeHtml(item.source || item.source_id || "Sorgente sconosciuta")}</div>`;
 
       return `
         <article class="card">
           <div class="media">${photo}</div>
           <div class="content">
+            ${sourceBadge}
             <h3>${escapeHtml(item.full_name)}</h3>
             <p><strong>Data funerale:</strong> ${date}</p>
+            <p><strong>Età:</strong> ${escapeHtml(age)}</p>
             <p><strong>Paese:</strong> ${escapeHtml(item.paese || "n.d.")}</p>
             <p><strong>Nome:</strong> ${escapeHtml(item.nome || "")}</p>
             <p><strong>Cognome:</strong> ${escapeHtml(item.cognome || "")}</p>
@@ -120,10 +124,29 @@ function renderSummaryPage(items, updatedAt) {
       font-size: 1.2rem;
       letter-spacing: 0.02em;
     }
+    .header-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
     header p {
       margin: 4px 0 0;
       color: var(--muted);
       font-size: 0.9rem;
+    }
+    .btn-toggle-old {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--ink);
+      border-radius: 999px;
+      padding: 7px 12px;
+      font-size: 0.82rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .btn-toggle-old:hover {
+      border-color: #b8b0a5;
     }
     main {
       max-width: 1200px;
@@ -188,6 +211,19 @@ function renderSummaryPage(items, updatedAt) {
       font-size: 0.98rem;
       line-height: 1.25;
     }
+    .source-badge {
+      display: inline-block;
+      margin: 0 0 8px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: #f7e3d2;
+      color: #7c2d12;
+      border: 1px solid #edc4a5;
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
     .content p {
       margin: 0 0 4px;
       font-size: 0.87rem;
@@ -212,17 +248,40 @@ function renderSummaryPage(items, updatedAt) {
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 12px;
-      padding: 16px;
       margin-bottom: 20px;
+      overflow: hidden;
     }
-    .summary-box h3 {
-      margin: 0 0 8px;
+    .summary-box summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 14px 16px;
       font-size: 0.95rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .summary-box summary::-webkit-details-marker {
+      display: none;
+    }
+    .summary-box summary::after {
+      content: "▾";
+      color: var(--muted);
+      font-size: 0.9rem;
+      transition: transform 0.2s ease;
+    }
+    .summary-box[open] summary::after {
+      transform: rotate(180deg);
+    }
+    .summary-content {
+      padding: 0 16px 14px;
+      border-top: 1px solid var(--line);
     }
     .summary-box ul {
       list-style: none;
       padding: 0;
-      margin: 0;
+      margin: 10px 0 0;
     }
     .summary-box li {
       font-size: 0.87rem;
@@ -311,14 +370,25 @@ function renderSummaryPage(items, updatedAt) {
 </head>
 <body>
   <header>
-    <h1>Necrologi Zona TV</h1>
+    <div class="header-row">
+      <h1>Necrologi Zona TV</h1>
+      <button id="toggleOldBtn" class="btn-toggle-old" data-include-hidden="${includeHidden ? "true" : "false"}">
+        ${includeHidden ? "Nascondi i vecchi" : "Mostra i vecchi"}
+      </button>
+    </div>
     <p>Aggiornato: ${escapeHtml(updatedAt || "mai")}</p>
+    <p>Necrologi vecchi nascosti: ${Number(hiddenCount || 0)}</p>
   </header>
   <main>
-    <div class="summary-box">
-      <h3>📊 Riepilogo per sorgente</h3>
-      <ul>${sourceSummary || '<li>Nessun dato disponibile</li>'}</ul>
-    </div>
+    <details class="summary-box" open>
+      <summary>
+        <span>📊 Riepilogo per sorgente</span>
+        <span>${groupsBySourceId.size} sorgenti</span>
+      </summary>
+      <div class="summary-content">
+        <ul>${sourceSummary || '<li>Nessun dato disponibile</li>'}</ul>
+      </div>
+    </details>
     ${sections || '<div class="empty">Nessun necrologio disponibile al momento.</div>'}
   </main>
   <div id="progressContainer" class="progress-container">
@@ -336,6 +406,20 @@ function renderSummaryPage(items, updatedAt) {
     </div>
   </div>
   <script>
+    const toggleOldBtn = document.getElementById('toggleOldBtn');
+    if (toggleOldBtn) {
+      toggleOldBtn.addEventListener('click', () => {
+        const includeHidden = toggleOldBtn.dataset.includeHidden === 'true';
+        const url = new URL(window.location.href);
+        if (includeHidden) {
+          url.searchParams.delete('include_hidden');
+        } else {
+          url.searchParams.set('include_hidden', 'true');
+        }
+        window.location.href = url.toString();
+      });
+    }
+
     document.querySelectorAll('.btn-rescan').forEach(btn => {
       btn.addEventListener('click', async (e) => {
         e.preventDefault();
@@ -428,9 +512,13 @@ let state = {
 
 const config = loadConfig();
 
+function getVisibleItems(items) {
+  return (items || []).filter((item) => item && !item.hidden_old);
+}
+
 function getNewItems(previousItems, currentItems) {
   const oldIds = new Set((previousItems || []).map((x) => x.id));
-  return (currentItems || []).filter((x) => x && x.id && !oldIds.has(x.id));
+  return getVisibleItems(currentItems || []).filter((x) => x && x.id && !oldIds.has(x.id));
 }
 
 async function refreshData() {
@@ -443,7 +531,7 @@ async function refreshData() {
 
   try {
     const previousItems = state.items;
-    let items = await scrapeAll(config);
+    let items = await scrapeAll({ ...config, existingItems: previousItems });
 
     if (config.save_images) {
       items = await persistImages(items);
@@ -480,7 +568,7 @@ async function refreshSource(sourceId) {
 
   try {
     const previousItems = state.items;
-    let sourceItems = await scrapeSource(source, config);
+    let sourceItems = await scrapeSource(source, config, null, previousItems);
 
     if (config.save_images) {
       sourceItems = await persistImages(sourceItems);
@@ -520,21 +608,27 @@ app.get("/health", (_, res) => {
     status: "ok",
     running: state.running,
     last_update: state.lastUpdate,
-    items: state.items.length,
+    items: getVisibleItems(state.items).length,
+    hidden_items: (state.items || []).filter((item) => item && item.hidden_old).length,
     last_error: state.lastError,
   });
 });
 
 app.get(["/", "/web"], (_, res) => {
+  const includeHidden = String(_.query.include_hidden || "").toLowerCase() === "true";
+  const visibleItems = getVisibleItems(state.items);
+  const itemsToShow = includeHidden ? state.items : visibleItems;
+  const hiddenCount = (state.items || []).length - visibleItems.length;
   res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.send(renderSummaryPage(state.items, state.lastUpdate));
+  res.send(renderSummaryPage(itemsToShow, state.lastUpdate, includeHidden, hiddenCount));
 });
 
 app.get("/obituaries", (req, res) => {
   const town = (req.query.town || "").toString().trim().toLowerCase();
   const limit = Number(req.query.limit || 0);
+  const includeHidden = String(req.query.include_hidden || "").toLowerCase() === "true";
 
-  let items = state.items;
+  let items = includeHidden ? state.items : getVisibleItems(state.items);
   if (town) {
     items = items.filter((x) => (x.paese || "").toLowerCase() === town);
   }
@@ -545,13 +639,15 @@ app.get("/obituaries", (req, res) => {
   res.json({
     updated_at: state.lastUpdate,
     count: items.length,
+    hidden_count: (state.items || []).filter((item) => item && item.hidden_old).length,
     items,
   });
 });
 
 app.get("/obituaries/latest", (req, res) => {
   const limit = Math.max(1, Number(req.query.limit || 10));
-  const items = state.items.slice(0, limit);
+  const includeHidden = String(req.query.include_hidden || "").toLowerCase() === "true";
+  const items = (includeHidden ? state.items : getVisibleItems(state.items)).slice(0, limit);
   res.json({
     updated_at: state.lastUpdate,
     count: items.length,
@@ -619,7 +715,7 @@ app.get("/refresh-source-stream/:sourceId", (req, res) => {
           count: progress.count,
           percent: Math.round((progress.current / progress.total) * 100),
         });
-      });
+      }, previousItems);
 
       sendEvent("persist", { status: "Download immagini..." });
 

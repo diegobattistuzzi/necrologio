@@ -45,10 +45,11 @@ function publish(topic, payload, retain) {
 }
 
 function buildSummary(items, updatedAt) {
+  const visibleItems = (items || []).filter((item) => item && !item.hidden_old);
   const bySource = {};
   const byTown = {};
 
-  for (const item of items) {
+  for (const item of visibleItems) {
     const sourceId = item.source_id || "sconosciuta";
     const town = item.paese || "Non specificato";
     bySource[sourceId] = (bySource[sourceId] || 0) + 1;
@@ -56,7 +57,7 @@ function buildSummary(items, updatedAt) {
   }
 
   return {
-    count: items.length,
+    count: visibleItems.length,
     updated_at: updatedAt,
     by_source: bySource,
     by_town: byTown,

@@ -21,6 +21,7 @@ const DEFAULT_CONFIG = {
   ai_max_items_per_run: 20,
   ai_timeout_ms: 15000,
   ha_api_url: "http://supervisor/core/api",
+  ha_access_token: "",
   towns: ["Orsago", "Cordignano", "Godega", "San Fior"],
   log_level: "info",
   listen_port: 8099,
