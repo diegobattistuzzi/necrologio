@@ -14,7 +14,131 @@ app.set("view engine", "ejs");
 app.use(express.json());
 app.use("/images", express.static(SHARE_IMAGES_DIR));
 
-function buildSummaryViewModel(items, updatedAt, includeHidden, hiddenCount) {
+function escapeIcsText(value) {
+  return String(value || "")
+    .replace(/\\/g, "\\\\")
+    .replace(/\r?\n/g, "\\n")
+    .replace(/,/g, "\\,")
+    .replace(/;/g, "\\;");
+}
+
+function parseDateAndTime(dateValue, timeValue) {
+  const dateText = String(dateValue || "").trim();
+  const dateMatch = dateText.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!dateMatch) {
+    return null;
+  }
+
+  const day = Number(dateMatch[1]);
+  const month = Number(dateMatch[2]);
+  const year = Number(dateMatch[3]);
+  if (!Number.isFinite(day) || !Number.isFinite(month) || !Number.isFinite(year)) {
+    return null;
+  }
+
+  const date = new Date(year, month - 1, day, 0, 0, 0, 0);
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+
+  const timeText = String(timeValue || "").trim();
+  const timeMatch = timeText.match(/^(\d{1,2}):(\d{2})$/);
+  if (timeMatch) {
+    const hh = Number(timeMatch[1]);
+    const mm = Number(timeMatch[2]);
+    if (hh >= 0 && hh <= 23 && mm >= 0 && mm <= 59) {
+      date.setHours(hh, mm, 0, 0);
+      return { date, hasTime: true };
+    }
+  }
+
+  return { date, hasTime: false };
+}
+
+function formatIcsDate(date) {
+  const y = String(date.getFullYear());
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}${m}${d}`;
+}
+
+function formatIcsDateTime(date) {
+  const y = String(date.getFullYear());
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  const hh = String(date.getHours()).padStart(2, "0");
+  const mm = String(date.getMinutes()).padStart(2, "0");
+  const ss = String(date.getSeconds()).padStart(2, "0");
+  return `${y}${m}${d}T${hh}${mm}${ss}`;
+}
+
+function buildCalendarIcs(items, calendarName) {
+  const now = new Date();
+  const dtstamp = formatIcsDateTime(now);
+  const lines = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//necrologio//funerali//IT",
+    "CALSCALE:GREGORIAN",
+    "METHOD:PUBLISH",
+    `X-WR-CALNAME:${escapeIcsText(calendarName || "Funerali")}`,
+  ];
+
+  for (const item of items || []) {
+    const parsed = parseDateAndTime(item?.data_funerale, item?.ora_funerale);
+    if (!parsed) {
+      continue;
+    }
+
+    const start = new Date(parsed.date.getTime());
+    const end = new Date(parsed.date.getTime());
+    if (parsed.hasTime) {
+      end.setMinutes(end.getMinutes() + 60);
+    } else {
+      end.setDate(end.getDate() + 1);
+    }
+
+    const fullName = item?.full_name || "Funerale";
+    const town = item?.paese || "";
+    const place = item?.luogo_funerale || "";
+    const summaryTown = town ? ` - ${town}` : "";
+    const summary = `Funerale ${fullName}${summaryTown}`;
+    const descriptionParts = [
+      town ? `Paese: ${town}` : "",
+      place ? `Luogo: ${place}` : "",
+      item?.parenti ? `Parenti: ${item.parenti}` : "",
+      item?.obituary_url ? `Annuncio: ${item.obituary_url}` : "",
+    ].filter(Boolean);
+
+    lines.push("BEGIN:VEVENT");
+    lines.push(`UID:${escapeIcsText(item.id || `${fullName}-${formatIcsDate(start)}`)}@necrologio`);
+    lines.push(`DTSTAMP:${dtstamp}`);
+    if (parsed.hasTime) {
+      lines.push(`DTSTART:${formatIcsDateTime(start)}`);
+      lines.push(`DTEND:${formatIcsDateTime(end)}`);
+    } else {
+      lines.push(`DTSTART;VALUE=DATE:${formatIcsDate(start)}`);
+      lines.push(`DTEND;VALUE=DATE:${formatIcsDate(end)}`);
+    }
+    if (place) {
+      lines.push(`LOCATION:${escapeIcsText(place)}`);
+    }
+    lines.push(`SUMMARY:${escapeIcsText(summary)}`);
+    if (descriptionParts.length) {
+      lines.push(`DESCRIPTION:${escapeIcsText(descriptionParts.join("\\n"))}`);
+    }
+    lines.push("END:VEVENT");
+  }
+
+  lines.push("END:VCALENDAR");
+  return `${lines.join("\r\n")}\r\n`;
+}
+
+function buildSummaryViewModel(items, updatedAt, includeHidden, hiddenCount, selectedTown, showSummary) {
   const groupsBySourceId = new Map();
 
   for (const source of SOURCES) {
@@ -45,10 +169,24 @@ function buildSummaryViewModel(items, updatedAt, includeHidden, hiddenCount) {
     updatedAt: updatedAt || "mai",
     includeHidden: Boolean(includeHidden),
     hiddenCount: Number(hiddenCount || 0),
+    selectedTown: normalizeTownLabel(selectedTown),
+    showSummary: Boolean(showSummary),
     sourceGroups,
     sourceCount: groupsBySourceId.size,
     items: sortedItems,
   };
+}
+
+function normalizeTownLabel(value) {
+  const text = String(value || "").trim();
+  if (!text) {
+    return "";
+  }
+  return text
+    .split(" ")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
 }
 
 let state = {
@@ -171,12 +309,20 @@ app.get("/health", (_, res) => {
   });
 });
 
-app.get(["/", "/web"], (_, res) => {
-  const includeHidden = String(_.query.include_hidden || "").toLowerCase() === "true";
+app.get(["/", "/web"], (req, res) => {
+  const includeHidden = String(req.query.include_hidden || "").toLowerCase() === "true";
+  const town = String(req.query.town || "").trim().toLowerCase();
+  const showSummary = String(req.query.summary || "true").toLowerCase() !== "false";
   const visibleItems = getVisibleItems(state.items);
-  const itemsToShow = includeHidden ? state.items : visibleItems;
+  let itemsToShow = includeHidden ? state.items : visibleItems;
+  if (town) {
+    itemsToShow = itemsToShow.filter((x) => String(x?.paese || "").trim().toLowerCase() === town);
+  }
   const hiddenCount = (state.items || []).length - visibleItems.length;
-  res.render("summary", buildSummaryViewModel(itemsToShow, state.lastUpdate, includeHidden, hiddenCount));
+  res.render(
+    "summary",
+    buildSummaryViewModel(itemsToShow, state.lastUpdate, includeHidden, hiddenCount, town, showSummary)
+  );
 });
 
 app.get("/obituaries", (req, res) => {
@@ -209,6 +355,44 @@ app.get("/obituaries/latest", (req, res) => {
     count: items.length,
     items,
   });
+});
+
+app.get("/calendar.ics", (req, res) => {
+  const includeHidden = String(req.query.include_hidden || "").toLowerCase() === "true";
+  const configuredTowns = Array.isArray(config.towns) ? config.towns : [];
+  const defaultTownSet = new Set(
+    configuredTowns
+      .map((x) => String(x || "").trim().toLowerCase())
+      .filter(Boolean)
+  );
+
+  const townsQuery = String(req.query.towns || "").trim();
+  const queryTownSet = new Set(
+    townsQuery
+      .split(",")
+      .map((x) => x.trim().toLowerCase())
+      .filter(Boolean)
+  );
+  const activeTownSet = queryTownSet.size > 0 ? queryTownSet : defaultTownSet;
+
+  let items = includeHidden ? state.items : getVisibleItems(state.items);
+  if (activeTownSet.size > 0) {
+    items = items.filter((item) => activeTownSet.has(String(item?.paese || "").trim().toLowerCase()));
+  }
+
+  items = [...items].sort(
+    (a, b) => dateToSortableNumber(b.data_funerale) - dateToSortableNumber(a.data_funerale)
+  );
+
+  const calendarName =
+    activeTownSet.size > 0
+      ? `Funerali - ${Array.from(activeTownSet).join(", ")}`
+      : "Funerali";
+  const ics = buildCalendarIcs(items, calendarName);
+
+  res.setHeader("Content-Type", "text/calendar; charset=utf-8");
+  res.setHeader("Content-Disposition", 'inline; filename="funerali.ics"');
+  res.send(ics);
 });
 
 app.post("/refresh", async (_, res) => {

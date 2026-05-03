@@ -45,6 +45,11 @@ Porta: `8099`
 - `GET /obituaries`
 - `GET /obituaries?town=Orsago`
 - `GET /obituaries/latest?limit=10`
+- `GET /calendar.ics` - Calendario iCal dei funerali (usa i comuni in `towns` di configurazione)
+- `GET /calendar.ics?towns=Orsago,Cordignano` - Calendario iCal filtrato per comuni specifici
+- `GET /web?town=Orsago` - Vista web filtrata per paese
+- `GET /web?town=Orsago&summary=false` - Vista web compatta (stile card, senza riepilogo sorgenti)
+- `GET /web?town=Orsago&summary=false&include_hidden=true` - Vista compatta includendo necrologi vecchi
 - `POST /refresh` - Rescan di tutte le sorgenti
 - `POST /refresh-source/:sourceId` - Rescan di una singola sorgente
 
@@ -63,6 +68,71 @@ Il parametro `sourceId` può essere uno di:
 Le immagini salvate sono pubblicate anche tramite:
 
 - `GET /images/<nome_file>`
+
+## Calendari in Home Assistant (ICS)
+
+Puoi caricare i funerali direttamente come calendari in Home Assistant usando l'endpoint iCal.
+
+Passi:
+
+1. Vai in **Impostazioni -> Dispositivi e servizi -> Aggiungi integrazione**.
+2. Cerca **iCalendar** (oppure **ICS Calendar** se usi HACS).
+3. Aggiungi un calendario da URL.
+4. Incolla uno degli URL qui sotto e assegna un nome al calendario.
+
+URL pronti consigliati:
+
+- Orsago + Cordignano: `http://IP_DEL_TUO_HA:8099/calendar.ics?towns=Orsago,Cordignano`
+- Godega + San Fior: `http://IP_DEL_TUO_HA:8099/calendar.ics?towns=Godega,San%20Fior`
+
+Versione con necrologi nascosti/vecchi inclusi:
+
+- `http://IP_DEL_TUO_HA:8099/calendar.ics?towns=Orsago,Cordignano&include_hidden=true`
+- `http://IP_DEL_TUO_HA:8099/calendar.ics?towns=Godega,San%20Fior&include_hidden=true`
+
+Note:
+
+- Usa URL diretti con porta `8099` (non URL Ingress).
+- Se la tua installazione non mostra l'integrazione iCalendar nativa, installa **ICS Calendar** da HACS e ripeti i passi.
+- In dashboard puoi mostrare entrambi i calendari con una scheda **Calendario**.
+
+Checklist rapida (consigliata):
+
+1. Riavvia l'add-on dopo l'aggiornamento.
+2. Verifica dal browser che l'URL ICS risponda (`/calendar.ics`).
+3. Aggiungi il calendario in Home Assistant via integrazione iCalendar/ICS.
+4. Verifica dal browser che l'URL card risponda (`/web?town=Orsago&summary=false`).
+5. Aggiungi la card `iframe` in dashboard.
+
+### Card dashboard in stile pagina add-on (solo Orsago)
+
+Se vuoi una card con lo stesso stile grafico dell'applicazione, puoi incorporare la pagina web filtrata per paese.
+
+URL consigliato:
+
+- `http://IP_DEL_TUO_HA:8099/web?town=Orsago&summary=false`
+
+Configurazione dashboard (scheda Webpage):
+
+```yaml
+type: iframe
+url: http://IP_DEL_TUO_HA:8099/web?town=Orsago&summary=false
+aspect_ratio: 75%
+title: Necrologi Orsago
+```
+
+La card mostra, per i defunti di Orsago:
+
+- foto
+- anni
+- cognome e nome
+- parenti
+- link "Apri annuncio"
+
+Varianti utili:
+
+- includi necrologi vecchi: `http://IP_DEL_TUO_HA:8099/web?town=Orsago&summary=false&include_hidden=true`
+- cambia comune (esempio Cordignano): `http://IP_DEL_TUO_HA:8099/web?town=Cordignano&summary=false`
 
 ## Interfaccia web riepilogo
 
