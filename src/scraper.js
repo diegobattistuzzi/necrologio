@@ -14,30 +14,56 @@ const {
 const { runOcrFromImage } = require("./ocr");
 const { extractAnnouncementDetails } = require("./ai_extraction");
 
+const DEFAULT_WP_UPLOADS_MAX_AGE_MONTHS = 2;
+
 const SOURCES = [
   {
     id: "servizi_salvador",
     label: "Servizi Salvador",
     listUrl: "https://www.servizisalvador.it/necrologi/",
     type: "salvador",
+    preferLinkedImage: true,
+    ocrEligible: true,
   },
   {
     id: "ultimoviaggio",
     label: "Ultimo Viaggio",
     listUrl: "https://ultimoviaggio.it/necrologi/",
     type: "ultimoviaggio",
+    ocrEligible: true,
   },
   {
     id: "memorial",
     label: "Memorial",
     listUrl: "https://www.onoranzefunebrimemorial.it/necrologi/",
     type: "memorial",
+    funeralDateListHintFirst: true,
   },
   {
     id: "san_osvaldo",
     label: "San Osvaldo",
     listUrl: "https://onoranzefunebrisanosvaldo.it/necrologi/",
     type: "sanosvaldo",
+    listingRule: {
+      detailSelector: "h2 a[href], h3 a[href]",
+      skipListPageRegex: /\/necrologi\/?$|\/necrologi\/page\//i,
+      requiredHostIncludes: "onoranzefunebrisanosvaldo.it",
+      blockedUrlRegex: /\/contattaci|\/servizi|\/privacy|\/privacy-policy|\/gestione-dei-cookie|\/category\//i,
+    },
+  },
+  {
+    id: "san_pietro_faldon",
+    label: "Onoranze Funebri San Pietro Faldon",
+    listUrl: "https://onoranzefunebrisanpietrofaldon.it/elenco-necrologi/",
+    type: "sanpietrofaldon",
+    listingRule: {
+      detailSelector: "h2 a[href*='/necrologi/'], h3 a[href*='/necrologi/']",
+      skipListPageRegex: /\/elenco-necrologi\/?$/i,
+      requiredHostIncludes: "onoranzefunebrisanpietrofaldon.it",
+      blockedUrlRegex: /\/privacy|\/cookie|\/contatti|\/servizi|\/chi-siamo|\/cerimonia/i,
+    },
+    ocrEligible: true,
+    wpUploadsMaxAgeMonths: 2,
   },
   {
     id: "pfa_san_marco",
@@ -50,30 +76,77 @@ const SOURCES = [
     label: "Onoranze Funebri Zanette",
     listUrl: "https://www.onoranzefunebrizanette.it/necrologi-cordogli-online-cordignano",
     type: "zanette",
+    listingRule: {
+      detailSelector: ".postArticle a[href], a[data-blog-post-alias][href]",
+      skipListPageRegex: /\/necrologi-cordogli-online-cordignano\/?$/i,
+      blockedUrlRegex: /\/privacy|\/cookie|\/contatti|\/servizi|\/articoli/i,
+    },
+    ocrEligible: true,
+    swapFirstLastName: true,
   },
   {
     id: "salamon",
     label: "Pompe Funebri Salamon",
     listUrl: "https://www.pompefunebrisalamon.com/condoglianze-online/",
     type: "salamon",
+    listingRule: {
+      detailSelector: "h3 a[href*='/condoglianze-online/'], h2 a[href*='/condoglianze-online/']",
+      skipListPageRegex: /\/condoglianze-online\/?$/i,
+    },
+    preferLinkedImage: true,
+    ocrEligible: true,
   },
   {
     id: "lapace_conegliano",
     label: "Onoranze Funebri La Pace Conegliano",
     listUrl: "https://www.onoranzefunebrilapaceconegliano.com/annunci-funebri/",
     type: "lapace",
+    listingRule: {
+      detailSelector: "h2 a[href*='/annuncio/'], h3 a[href*='/annuncio/']",
+      skipListPageRegex: /\/annunci-funebri\/?$/i,
+      blockedUrlRegex: /\/privacy|\/cookie|\/contatti|\/servizi|\/storie-di-vita|\/socrem-tv/i,
+    },
+    preferLinkedImage: true,
+    ocrEligible: true,
+    reprocessWhenNameNoisy: true,
   },
   {
     id: "zanardo",
     label: "Agenzia Funebre Zanardo",
     listUrl: "https://www.agenziafunebrezanardo.it/condoglianze-online/",
     type: "zanardo",
+    listingRule: {
+      detailSelector: "h3 a[href*='/condoglianze-online/'], h2 a[href*='/condoglianze-online/']",
+      skipListPageRegex: /\/condoglianze-online\/?$/i,
+    },
+    preferLinkedImage: true,
+    ocrEligible: true,
   },
   {
     id: "roman",
     label: "Onoranze Funebri Roman",
     listUrl: "https://www.ofroman.com/lista-annunci-db.php",
     type: "roman",
+    ocrEligible: true,
+  },
+  {
+    id: "sandrin",
+    label: "Onoranze Funebri Sandrin",
+    listUrl: "https://www.onoranzefunebrisandrin.com/necrologi/",
+    type: "sandrin",
+    listingRule: {
+      detailSelector: "h2 a[href]",
+      skipListPageRegex: /\/necrologi\/?$/i,
+      blockedUrlRegex: /\/privacy|\/(cookie|contatti|servizi|chi-siamo|pubblicazione)/i,
+    },
+    ocrEligible: true,
+  },
+  {
+    id: "boscaia",
+    label: "Onoranze Funebri Boscaia",
+    listUrl: "https://boscaia.com/epigrafi.php",
+    type: "boscaia",
+    ocrEligible: true,
   },
 ];
 
@@ -127,6 +200,41 @@ function parseListing($, source, maxItems) {
     });
   }
 
+  function parseStandardLinks(rule, options = {}) {
+    if (!rule || !rule.detailSelector) {
+      return;
+    }
+
+    $(rule.detailSelector).each((_, el) => {
+      const href = $(el).attr("href");
+      const title = normalizeText($(el).text());
+      if (!href || !title) {
+        return;
+      }
+      if (isNoiseTitle(title)) {
+        return;
+      }
+      if (title.split(" ").length < 2) {
+        return;
+      }
+      if (rule.skipListPageRegex && rule.skipListPageRegex.test(href)) {
+        return;
+      }
+      if (rule.requiredHostIncludes && !href.includes(rule.requiredHostIncludes)) {
+        return;
+      }
+      if (rule.blockedUrlRegex && rule.blockedUrlRegex.test(href)) {
+        return;
+      }
+
+      const cardSelector = options.cardSelector || "article, li, div";
+      const parentText = normalizeText($(el).closest(cardSelector).text());
+      const dateHint = extractDateFromText(parentText);
+      const listImageUrl = options.extractListImage ? options.extractListImage($(el)) : null;
+      push(href, title, dateHint, listImageUrl);
+    });
+  }
+
   if (source.type === "salvador") {
     $("a[href*='/necrologi/']").each((_, el) => {
       const href = $(el).attr("href");
@@ -168,31 +276,7 @@ function parseListing($, source, maxItems) {
   }
 
   if (source.type === "sanosvaldo") {
-    $("h2 a[href], h3 a[href]").each((_, el) => {
-      const href = $(el).attr("href");
-      const title = normalizeText($(el).text());
-      if (!href || !title) {
-        return;
-      }
-      if (isNoiseTitle(title)) {
-        return;
-      }
-      if (title.split(" ").length < 2) {
-        return;
-      }
-      if (/\/necrologi\/?$/i.test(href) || /\/necrologi\/page\//i.test(href)) {
-        return;
-      }
-      if (!href.includes("onoranzefunebrisanosvaldo.it")) {
-        return;
-      }
-      if (/\/contattaci|\/servizi|\/privacy|\/privacy-policy|\/gestione-dei-cookie|\/category\//i.test(href)) {
-        return;
-      }
-      const parentText = normalizeText($(el).closest("article, div, li").text());
-      const dateHint = extractDateFromText(parentText);
-      push(href, title, dateHint);
-    });
+    parseStandardLinks(source.listingRule, { cardSelector: "article, div, li" });
   }
 
   if (source.type === "pfasanmarco") {
@@ -213,103 +297,71 @@ function parseListing($, source, maxItems) {
   }
 
   if (source.type === "zanette") {
-    $(".postArticle a[href], a[data-blog-post-alias][href]").each((_, el) => {
-      const href = $(el).attr("href");
-      const title = normalizeText($(el).text());
-      if (!href || !title) {
-        return;
-      }
-      if (isNoiseTitle(title)) {
-        return;
-      }
-      if (title.split(" ").length < 2) {
-        return;
-      }
-      if (/\/necrologi-cordogli-online-cordignano\/?$/i.test(href)) {
-        return;
-      }
-      if (/\/privacy|\/cookie|\/contatti|\/servizi|\/articoli/i.test(href)) {
-        return;
-      }
-
-      const card = $(el).closest(".postArticle, article, li, div");
-      const parentText = normalizeText(card.text());
-      const dateHint = extractDateFromText(parentText);
-      const styleImage = extractBackgroundImageUrl(card.find(".blogImg").first().attr("style"));
-      const imgSrc = card.find(".blogImg img").first().attr("src");
-      push(href, title, dateHint, styleImage || imgSrc || null);
+    parseStandardLinks(source.listingRule, {
+      cardSelector: ".postArticle, article, li, div",
+      extractListImage: (el) => {
+        const card = el.closest(".postArticle, article, li, div");
+        const styleImage = extractBackgroundImageUrl(card.find(".blogImg").first().attr("style"));
+        const imgSrc = card.find(".blogImg img").first().attr("src");
+        return styleImage || imgSrc || null;
+      },
     });
   }
 
   if (source.type === "salamon") {
-    $("h3 a[href*='/condoglianze-online/'], h2 a[href*='/condoglianze-online/']").each((_, el) => {
-      const href = $(el).attr("href");
-      const title = normalizeText($(el).text());
-      if (!href || !title) {
-        return;
-      }
-      if (isNoiseTitle(title)) {
-        return;
-      }
-      if (title.split(" ").length < 2) {
-        return;
-      }
-      if (/\/condoglianze-online\/?$/i.test(href)) {
-        return;
-      }
-
-      const parentText = normalizeText($(el).closest("article, li, div").text());
-      const dateHint = extractDateFromText(parentText);
-      push(href, title, dateHint);
-    });
+    parseStandardLinks(source.listingRule);
   }
 
   if (source.type === "lapace") {
-    $("h2 a[href*='/annuncio/'], h3 a[href*='/annuncio/']").each((_, el) => {
-      const href = $(el).attr("href");
-      const title = normalizeText($(el).text());
-      if (!href || !title) {
-        return;
-      }
-      if (isNoiseTitle(title)) {
-        return;
-      }
-      if (title.split(" ").length < 2) {
-        return;
-      }
-      if (/\/annunci-funebri\/?$/i.test(href)) {
-        return;
-      }
-      if (/\/privacy|\/cookie|\/contatti|\/servizi|\/storie-di-vita|\/socrem-tv/i.test(href)) {
-        return;
-      }
-
-      const parentText = normalizeText($(el).closest("article, li, div").text());
-      const dateHint = extractDateFromText(parentText);
-      push(href, title, dateHint);
-    });
+    parseStandardLinks(source.listingRule);
   }
 
   if (source.type === "zanardo") {
-    $("h3 a[href*='/condoglianze-online/'], h2 a[href*='/condoglianze-online/']").each((_, el) => {
-      const href = $(el).attr("href");
-      const title = normalizeText($(el).text());
-      if (!href || !title) {
+    parseStandardLinks(source.listingRule);
+  }
+
+  if (source.type === "sanpietrofaldon") {
+    parseStandardLinks(source.listingRule);
+  }
+
+  if (source.type === "boscaia") {
+    $("h3").each((_, el) => {
+      const h3 = $(el);
+      const title = normalizeText(h3.text());
+      if (!title || title.split(" ").length < 2) {
         return;
       }
       if (isNoiseTitle(title)) {
         return;
       }
-      if (title.split(" ").length < 2) {
-        return;
+
+      // Cerca il link "VEDI EPIGRAFE" nel contenitore padre (o nonno)
+      let container = h3.parent();
+      let vepiHref = container.find("a").filter((_, a) => /vedi epigrafe/i.test($(a).text())).first().attr("href");
+      if (!vepiHref) {
+        container = h3.parent().parent();
+        vepiHref = container.find("a").filter((_, a) => /vedi epigrafe/i.test($(a).text())).first().attr("href");
       }
-      if (/\/condoglianze-online\/?$/i.test(href)) {
+      if (!vepiHref || !/\/\d+\.html/.test(vepiHref)) {
         return;
       }
 
-      const parentText = normalizeText($(el).closest("article, li, div").text());
-      const dateHint = extractDateFromText(parentText);
-      push(href, title, dateHint);
+      const imgSrc = container.find("img").first().attr("src");
+      const containerText = normalizeText(container.text());
+      const dateHint = extractDateFromText(containerText);
+      push(vepiHref, title, dateHint, imgSrc || null);
+    });
+  }
+
+  if (source.type === "sandrin") {
+    parseStandardLinks(source.listingRule, {
+      cardSelector: "article, .post, li, div",
+      extractListImage: (el) => {
+        const card = el.closest("article, .post, li, div");
+        const imgSrc = card.find("img").first().attr("src") ||
+          card.find("[style*='background-image']").attr("style");
+        return imgSrc && !String(imgSrc).includes("background") ? imgSrc : null;
+      },
     });
   }
 
@@ -367,6 +419,29 @@ function extractImage($, preferLinkedJpg) {
   return candidates[0] || null;
 }
 
+// Pattern che segnalano l'inizio di sezioni di "rumore" (sidebar, footer, altri necrologi, form)
+// che non appartengono al testo del singolo necrologio.
+const BODY_TEXT_CUTOFF_REGEX = /(?:
+  mostra\s+altri\s+necrologi |
+  altri\s+necrologi |
+  post\s+(?:pi[uù]\s+recente|meno\s+recente) |
+  articolo\s+(?:successivo|precedente) |
+  invia\s+messaggio |
+  lascia\s+un\s+(?:messaggio|commento) |
+  condividi\s+(?:su|il\s+tuo) |
+  iscriviti\s+alla\s+newsletter |
+  privacy\s+policy |
+  utilizziamo\s+i\s+cookie |
+  tutti\s+i\s+diritti\s+riservati |
+  designed\s+by
+)/ix;
+
+function applyGeneralCutoff(text) {
+  if (!text) return text;
+  const match = text.match(new RegExp(`^([\\s\\S]*?)(?:${BODY_TEXT_CUTOFF_REGEX.source})`, BODY_TEXT_CUTOFF_REGEX.flags.replace("g", "")));
+  return match && match[1] && match[1].length > 60 ? normalizeText(match[1]) : text;
+}
+
 function extractDetailBodyText($, source) {
   if (source.id === "memorial") {
     const memorialText = normalizeText(
@@ -383,10 +458,11 @@ function extractDetailBodyText($, source) {
     if (cutoffMatch && cutoffMatch[1]) {
       return normalizeText(cutoffMatch[1]);
     }
-    return bodyText;
+    return applyGeneralCutoff(bodyText);
   }
 
-  return normalizeText($("article, main, .post, .entry-content, body").first().text());
+  const rawText = normalizeText($("article, main, .post, .entry-content, body").first().text());
+  return applyGeneralCutoff(rawText);
 }
 
 function toTitleCase(value) {
@@ -395,6 +471,28 @@ function toTitleCase(value) {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
     .join(" ");
+}
+
+function chooseHigherDate(...values) {
+  let best = null;
+  let bestSort = 0;
+
+  for (const value of values) {
+    const candidate = normalizeText(value || "");
+    if (!candidate) {
+      continue;
+    }
+    const sortable = dateToSortableNumber(candidate);
+    if (!sortable) {
+      continue;
+    }
+    if (!best || sortable > bestSort) {
+      best = candidate;
+      bestSort = sortable;
+    }
+  }
+
+  return best;
 }
 
 function deriveNameFromObituaryUrl(url) {
@@ -410,6 +508,43 @@ function deriveNameFromObituaryUrl(url) {
   } catch {
     return "";
   }
+}
+
+function getWpUploadsYearMonth(url) {
+  const value = normalizeText(url || "");
+  if (!value) {
+    return null;
+  }
+  const match = value.match(/\/wp-content\/uploads\/(\d{4})\/(\d{1,2})\//i);
+  if (!match) {
+    return null;
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) {
+    return null;
+  }
+
+  return { year, month };
+}
+
+function isOldByWpUploadsMonth(url, maxAgeMonths) {
+  const ym = getWpUploadsYearMonth(url);
+  if (!ym) {
+    return false;
+  }
+
+  const now = new Date();
+  const currentIndex = now.getFullYear() * 12 + (now.getMonth() + 1);
+  const itemIndex = ym.year * 12 + ym.month;
+  const ageInMonths = currentIndex - itemIndex;
+
+  if (ageInMonths < 0) {
+    return false;
+  }
+
+  return ageInMonths > Math.max(0, Number(maxAgeMonths || DEFAULT_WP_UPLOADS_MAX_AGE_MONTHS));
 }
 
 async function scrapeDetail(entry, source, options, ocrState, aiState) {
@@ -430,37 +565,26 @@ async function scrapeDetail(entry, source, options, ocrState, aiState) {
     if (isNoiseTitle(personTitle || title)) {
       return null;
     }
-    const detailImageUrl = absoluteUrl(
-      entry.url,
-      extractImage(
-        $,
-        source.id === "servizi_salvador" ||
-          source.id === "salamon" ||
-          source.id === "lapace_conegliano" ||
-          source.id === "zanardo"
-      )
-    );
+    const detailImageUrl = absoluteUrl(entry.url, extractImage($, Boolean(source.preferLinkedImage)));
     const imageUrl = entry.listImageUrl || detailImageUrl;
+    const hiddenByWpUploads = isOldByWpUploadsMonth(imageUrl, source.wpUploadsMaxAgeMonths);
+    if (hiddenByWpUploads) {
+      console.info(`[scraper] Nascosto da wp-content/uploads vecchio: source=${source.id} title=${personTitle || title} image=${imageUrl}`);
+    }
     const bodyText = extractDetailBodyText($, source);
     const contextText = `${personTitle || title} ${bodyText}`;
     let town = findTown(contextText, options.towns);
 
     let funeralDate =
-      source.id === "memorial"
+      source.funeralDateListHintFirst
         ? (entry.listDateHint || extractFuneralDate(bodyText) || null)
         : (extractFuneralDate(bodyText) || entry.listDateHint || null);
 
-    const ocrEligibleSource =
-      source.id === "ultimoviaggio" ||
-      source.id === "zanette" ||
-      source.id === "servizi_salvador" ||
-      source.id === "salamon" ||
-      source.id === "lapace_conegliano" ||
-      source.id === "zanardo" ||
-      source.id === "roman";
+    const ocrEligibleSource = Boolean(source.ocrEligible);
     const mustRunOcr =
       options.enable_ocr &&
       ocrEligibleSource &&
+      !hiddenByWpUploads &&
       ocrState.used < options.ocr_max_items_per_run &&
       (!options.ocr_only_when_missing || !town || !funeralDate);
 
@@ -501,18 +625,16 @@ async function scrapeDetail(entry, source, options, ocrState, aiState) {
     const extracted = aiInputText
       ? await extractAnnouncementDetails(aiInputText, options, aiState)
       : { ai_used: false };
-    if (!funeralDate && extracted.data_funerale) {
-      funeralDate = extracted.data_funerale;
-    }
+    funeralDate = chooseHigherDate(funeralDate, extracted.data_funerale);
 
     const finalTitle = personTitle || title;
     const split = splitName(finalTitle.replace(/\s+-\s+.*$/, ""));
     // Zanette pubblica "Cognome Nome", quindi invertiamo
-    const { nome, cognome } = source.id === "zanette"
+    const { nome, cognome } = source.swapFirstLastName
       ? { nome: split.cognome, cognome: split.nome }
       : split;
 
-    const hiddenOld = Boolean(funeralDate && isOlderThanDays(funeralDate, 10));
+    const hiddenOld = Boolean((funeralDate && isOlderThanDays(funeralDate, 10)) || hiddenByWpUploads);
     if (hiddenOld) {
       console.info(`[scraper] Nascosto per data vecchia (>10 giorni): source=${source.id} title=${finalTitle} data_funerale=${funeralDate}`);
     }
@@ -529,6 +651,7 @@ async function scrapeDetail(entry, source, options, ocrState, aiState) {
       foto: imageUrl,
       paese: town,
       data_funerale: funeralDate,
+      ora_funerale: extracted.ora_funerale || null,
       anni: extracted.anni || null,
       parenti: extracted.parenti,
       luogo_funerale: extracted.luogo_funerale,
@@ -577,14 +700,18 @@ async function scrapeSource(source, options, onProgress, existingItems) {
 
       if (existingItem) {
         const existingNameIsNoisy = isNoiseTitle(existingItem.full_name || "");
-        const shouldReprocessExisting =
-          source.id === "lapace_conegliano" &&
-          (existingNameIsNoisy || !existingItem.nome || !existingItem.cognome);
+        const shouldReprocessExisting = Boolean(
+          source.reprocessWhenNameNoisy &&
+          (existingNameIsNoisy || !existingItem.nome || !existingItem.cognome)
+        );
 
         if (shouldReprocessExisting) {
           detail = await scrapeDetail(entry, source, options, ocrState, aiState);
         } else {
-        const hiddenOld = Boolean(existingItem.data_funerale && isOlderThanDays(existingItem.data_funerale, 10));
+        const hiddenByWpUploads = isOldByWpUploadsMonth(existingItem.foto, source.wpUploadsMaxAgeMonths);
+        const hiddenOld = Boolean(
+          (existingItem.data_funerale && isOlderThanDays(existingItem.data_funerale, 10)) || hiddenByWpUploads
+        );
         if (hiddenOld) {
           console.info(`[scraper] Nascosto da cache per data vecchia (>10 giorni): source=${source.id} title=${existingItem.full_name || entry.title} data_funerale=${existingItem.data_funerale}`);
         } else {

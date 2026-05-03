@@ -2,7 +2,7 @@ const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
-const { normalizeText, extractFuneralDate } = require("./utils");
+const { normalizeText, extractFuneralDate, dateToSortableNumber } = require("./utils");
 
 const AI_CACHE_FILE = path.join("/data", "ai_cache.json");
 const AI_CACHE_MAX_ENTRIES = 2000;
@@ -70,6 +70,7 @@ function getCachedAiResult(text) {
     parenti: normalizeText(value.parenti || "") || null,
     luogo_funerale: normalizeText(value.luogo_funerale || "") || null,
     data_funerale: normalizeText(value.data_funerale || "") || null,
+    ora_funerale: normalizeText(value.ora_funerale || "") || null,
     rosario: normalizeText(value.rosario || "") || null,
     anni: Number.isFinite(Number(value.anni)) ? Number(value.anni) : null,
   };
@@ -78,11 +79,13 @@ function getCachedAiResult(text) {
 function setCachedAiResult(text, result) {
   const cache = loadAiCache();
   const key = buildAiCacheKey(text);
+  const toStr = (v) => (Array.isArray(v) ? v.join(", ") : String(v || ""));
   cache[key] = {
-    parenti: normalizeText(result?.parenti || "") || null,
-    luogo_funerale: normalizeText(result?.luogo_funerale || "") || null,
-    data_funerale: normalizeText(result?.data_funerale || "") || null,
-    rosario: normalizeText(result?.rosario || "") || null,
+    parenti: normalizeText(toStr(result?.parenti)) || null,
+    luogo_funerale: normalizeText(toStr(result?.luogo_funerale)) || null,
+    data_funerale: normalizeText(toStr(result?.data_funerale)) || null,
+    ora_funerale: normalizeText(toStr(result?.ora_funerale)) || null,
+    rosario: normalizeText(toStr(result?.rosario)) || null,
     anni: Number.isFinite(Number(result?.anni)) ? Number(result.anni) : null,
     saved_at: Date.now(),
   };
@@ -117,6 +120,104 @@ function extractFuneralPlaceFromText(text) {
   );
 
   return match ? normalizeText(match[2]) : null;
+}
+
+function normalizeFuneralTime(value) {
+  const text = normalizeText(value);
+  if (!text) {
+    return null;
+  }
+
+  const match = text.match(/\b(\d{1,2})[:.](\d{2})\b/);
+  if (!match) {
+    return null;
+  }
+
+  const hh = Number(match[1]);
+  const mm = Number(match[2]);
+  if (hh < 0 || hh > 23 || mm < 0 || mm > 59) {
+    return null;
+  }
+
+  return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+}
+
+function extractFuneralTimeFromText(text) {
+  const value = normalizeText(text);
+  if (!value) {
+    return null;
+  }
+
+  const match = value.match(
+    /(funeral[ei]|esequie|cerimonia(?:\s+funebre)?|rito funebre)[^.\n]{0,220}?(?:alle?\s+ore\s*|ore\s*)(\d{1,2}[:.]\d{2})/i
+  );
+  if (match) {
+    return normalizeFuneralTime(match[2]);
+  }
+
+  const fallback = value.match(/\b(?:alle?\s+ore\s*|ore\s*)(\d{1,2}[:.]\d{2})\b/i);
+  return fallback ? normalizeFuneralTime(fallback[1]) : null;
+}
+
+function extractHighestFuneralDateFromText(text) {
+  const value = normalizeText(text);
+  if (!value) {
+    return null;
+  }
+
+  const dateRegex = /(\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4}|\d{1,2}\s+[A-Za-zÀ-ÖØ-öø-ÿ]+\s+\d{4})/gi;
+  const funeralContextRegex = /(funeral[ei]|esequie|cerimonia(?:\s+funebre)?|rosario|rito funebre)/i;
+  const noisyContextRegex = /(pubblicat[oa]|aggiornat[oa]|copyright|cookie|privacy)/i;
+
+  const candidates = [];
+  let match;
+  while ((match = dateRegex.exec(value)) !== null) {
+    const candidate = normalizeText(match[1]);
+    const sortable = dateToSortableNumber(candidate);
+    if (!sortable) {
+      continue;
+    }
+
+    const start = Math.max(0, match.index - 140);
+    const end = Math.min(value.length, dateRegex.lastIndex + 140);
+    const context = value.slice(start, end);
+    if (!funeralContextRegex.test(context) || noisyContextRegex.test(context)) {
+      continue;
+    }
+
+    candidates.push({ candidate, sortable });
+  }
+
+  if (!candidates.length) {
+    return null;
+  }
+
+  candidates.sort((a, b) => b.sortable - a.sortable);
+  return candidates[0].candidate;
+}
+
+function pickHigherFuneralDate(...values) {
+  let best = null;
+  let bestSort = 0;
+
+  for (const value of values) {
+    const candidate = normalizeText(value || "");
+    if (!candidate) {
+      continue;
+    }
+
+    const sortable = dateToSortableNumber(candidate);
+    if (!sortable) {
+      continue;
+    }
+
+    if (!best || sortable > bestSort) {
+      best = candidate;
+      bestSort = sortable;
+    }
+  }
+
+  return best;
 }
 
 function extractRosaryFromText(text) {
@@ -244,7 +345,7 @@ async function extractWithHomeAssistantAi(text, options) {
   const payload = {
     text:
       "Estrai da questo annuncio funebre SOLO JSON valido senza spiegazioni con chiavi: " +
-      'parenti, luogo_funerale, data_funerale, rosario, anni (eta del defunto come numero intero, vuoto se non disponibile). Usa stringa vuota se non disponibile. Testo: "' +
+      'parenti (stringa unica con tutti i nomi e grado parentela separati da virgola, NON array), luogo_funerale, data_funerale, ora_funerale, rosario, anni (eta del defunto come numero intero, vuoto se non disponibile). data_funerale in formato gg/mm/aaaa. Se trovi piu date funerale, scegli quella PIU ALTA. ora_funerale in formato HH:mm. Tutti i valori devono essere stringhe tranne anni. Usa stringa vuota se non disponibile. Testo: "' +
       cleanNecrologioText(text).slice(0, 6000) +
       '"',
     language: "it",
@@ -267,10 +368,25 @@ async function extractWithHomeAssistantAi(text, options) {
 
   console.debug(`[ai] Invio richiesta a Home Assistant conversation.process con payload: ${JSON.stringify(payload)}`);
 
-  const response = await axios.post(`${apiUrl}/conversation/process`, payload, {
-    timeout: timeoutMs,
-    headers,
-  });
+  let response;
+  let lastError;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      response = await axios.post(`${apiUrl}/conversation/process`, payload, {
+        timeout: timeoutMs,
+        headers,
+      });
+      break;
+    } catch (err) {
+      lastError = err;
+      const isTimeout = err.code === "ECONNABORTED" || err.code === "ETIMEDOUT";
+      if (!isTimeout || attempt === 2) {
+        throw err;
+      }
+      console.warn(`[ai] Timeout (tentativo ${attempt}/2), riprovo...`);
+    }
+  }
+  if (!response) throw lastError;
 
   try {
     console.debug(`[ai] Risposta completa Home Assistant: ${JSON.stringify(response?.data || {})}`);
@@ -287,21 +403,29 @@ async function extractWithHomeAssistantAi(text, options) {
 
   const anniRaw = parsed.anni;
   const anni = anniRaw && String(anniRaw).trim() !== "" ? (Number(anniRaw) || null) : null;
+  const heuristicDate = extractHighestFuneralDateFromText(text);
+
+  const toStr = (v) => (Array.isArray(v) ? v.join(", ") : String(v || ""));
 
   return {
-    parenti: normalizeText(parsed.parenti || "") || null,
-    luogo_funerale: normalizeText(parsed.luogo_funerale || "") || null,
-    data_funerale: normalizeText(parsed.data_funerale || "") || null,
-    rosario: normalizeText(parsed.rosario || "") || null,
+    parenti: normalizeText(toStr(parsed.parenti)) || null,
+    luogo_funerale: normalizeText(toStr(parsed.luogo_funerale)) || null,
+    data_funerale: pickHigherFuneralDate(normalizeText(toStr(parsed.data_funerale)), heuristicDate),
+    ora_funerale: normalizeFuneralTime(toStr(parsed.ora_funerale)) || extractFuneralTimeFromText(text),
+    rosario: normalizeText(toStr(parsed.rosario)) || null,
     anni,
   };
 }
 
 async function extractAnnouncementDetails(bodyText, options, aiState) {
+  const heuristicDate = extractFuneralDate(bodyText);
+  const heuristicHighestDate = extractHighestFuneralDateFromText(bodyText);
+
   const heuristics = {
     parenti: extractParentsFromText(bodyText),
     luogo_funerale: extractFuneralPlaceFromText(bodyText),
-    data_funerale: extractFuneralDate(bodyText),
+    data_funerale: pickHigherFuneralDate(heuristicDate, heuristicHighestDate),
+    ora_funerale: extractFuneralTimeFromText(bodyText),
     rosario: extractRosaryFromText(bodyText),
     anni: extractAgeFromText(bodyText),
   };
@@ -310,6 +434,7 @@ async function extractAnnouncementDetails(bodyText, options, aiState) {
     !options.ai_only_when_missing ||
     !heuristics.parenti ||
     !heuristics.luogo_funerale ||
+    !heuristics.ora_funerale ||
     !heuristics.rosario ||
     !heuristics.data_funerale ||
     !heuristics.anni;
@@ -330,7 +455,8 @@ async function extractAnnouncementDetails(bodyText, options, aiState) {
     return {
       parenti: heuristics.parenti || cachedAi.parenti,
       luogo_funerale: heuristics.luogo_funerale || cachedAi.luogo_funerale,
-      data_funerale: heuristics.data_funerale || cachedAi.data_funerale,
+      data_funerale: pickHigherFuneralDate(heuristics.data_funerale, cachedAi.data_funerale),
+      ora_funerale: heuristics.ora_funerale || cachedAi.ora_funerale,
       rosario: heuristics.rosario || cachedAi.rosario,
       anni: heuristics.anni || cachedAi.anni || null,
       ai_used: false,
@@ -370,7 +496,8 @@ async function extractAnnouncementDetails(bodyText, options, aiState) {
     return {
       parenti: heuristics.parenti || aiData.parenti,
       luogo_funerale: heuristics.luogo_funerale || aiData.luogo_funerale,
-      data_funerale: heuristics.data_funerale || aiData.data_funerale,
+      data_funerale: pickHigherFuneralDate(heuristics.data_funerale, aiData.data_funerale),
+      ora_funerale: heuristics.ora_funerale || aiData.ora_funerale,
       rosario: heuristics.rosario || aiData.rosario,
       anni: heuristics.anni || aiData.anni || null,
       ai_used: true,
@@ -395,6 +522,16 @@ async function extractAnnouncementDetails(bodyText, options, aiState) {
   }
 }
 
+function clearAiCache() {
+  aiCache = {};
+  try {
+    fs.writeFileSync(AI_CACHE_FILE, JSON.stringify({}, null, 2), "utf8");
+  } catch {
+    // ignore
+  }
+}
+
 module.exports = {
   extractAnnouncementDetails,
+  clearAiCache,
 };

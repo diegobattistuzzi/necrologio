@@ -42,6 +42,7 @@ function isLikelyImageUrl(url) {
 
 async function runOcrFromImage(imageUrl, towns) {
   if (!isLikelyImageUrl(imageUrl)) {
+    console.debug(`[ocr] Skippato (URL non immagine): ${imageUrl}`);
     return {
       text: "",
       town: null,
@@ -51,6 +52,7 @@ async function runOcrFromImage(imageUrl, towns) {
     };
   }
 
+  console.log(`[ocr] Download immagine: ${imageUrl}`);
   const response = await axios.get(imageUrl, {
     responseType: "arraybuffer",
     timeout: 30000,
@@ -59,17 +61,21 @@ async function runOcrFromImage(imageUrl, towns) {
       Accept: "image/*,*/*;q=0.8",
     },
   });
+  console.log(`[ocr] Immagine scaricata: ${Math.round(response.data.byteLength / 1024)} KB`);
 
   ensureTesseractWordFiles();
 
   let result;
+  let lang = "ita+eng";
   try {
-    result = await Tesseract.recognize(Buffer.from(response.data), "ita+eng", {
+    console.log(`[ocr] Avvio riconoscimento (lang=${lang})`);
+    result = await Tesseract.recognize(Buffer.from(response.data), lang, {
       logger: () => {},
     });
   } catch (error) {
-    console.warn(`[ocr] Tesseract fallback su eng: ${error.message}`);
-    result = await Tesseract.recognize(Buffer.from(response.data), "eng", {
+    lang = "eng";
+    console.warn(`[ocr] Tesseract fallback su ${lang}: ${error.message}`);
+    result = await Tesseract.recognize(Buffer.from(response.data), lang, {
       logger: () => {},
     });
   }
@@ -78,6 +84,8 @@ async function runOcrFromImage(imageUrl, towns) {
   const town = findTown(text, towns);
   const funeralDate = extractFuneralDate(text);
   const confidence = Number.isFinite(result?.data?.confidence) ? Number(result.data.confidence) : null;
+
+  console.log(`[ocr] Risultato | confidence=${confidence !== null ? confidence.toFixed(1) : "n/a"} | town=${town || "non trovata"} | funeralDate=${funeralDate || "non trovata"} | testo=${text.slice(0, 120).replace(/\n/g, " ")}${text.length > 120 ? "…" : ""}`);
 
   return {
     text,

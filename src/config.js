@@ -19,7 +19,7 @@ const DEFAULT_CONFIG = {
   ai_agent_id: "",
   ai_only_when_missing: true,
   ai_max_items_per_run: 20,
-  ai_timeout_ms: 15000,
+  ai_timeout_ms: 30000,
   ha_api_url: "http://supervisor/core/api",
   ha_access_token: "",
   towns: ["Orsago", "Cordignano", "Godega", "San Fior"],

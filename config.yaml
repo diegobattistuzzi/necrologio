@@ -1,6 +1,6 @@
 name: Necrologi Zona TV
 slug: necrologi_zona_tv
-version: "0.1.8"
+version: "0.1.10"
 description: Raccoglie necrologi per Orsago, Cordignano, Godega, San Fior e li espone via API.
 url: https://github.com/diegobattistuzzi/necrologio
 startup: services
@@ -40,7 +40,7 @@ options:
   ai_agent_id: ""
   ai_only_when_missing: true
   ai_max_items_per_run: 20
-  ai_timeout_ms: 15000
+  ai_timeout_ms: 30000
   ha_api_url: http://supervisor/core/api
   ha_access_token: ""
   towns:
@@ -72,7 +72,7 @@ schema:
   ai_agent_id: str?
   ai_only_when_missing: bool
   ai_max_items_per_run: int(1,100)
-  ai_timeout_ms: int(3000,60000)
+  ai_timeout_ms: int(3000,120000)
   ha_api_url: str
   ha_access_token: password?
   towns:
