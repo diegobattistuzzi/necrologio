@@ -63,6 +63,9 @@ const SOURCES = [
       blockedUrlRegex: /\/privacy|\/cookie|\/contatti|\/servizi|\/chi-siamo|\/cerimonia/i,
     },
     ocrEligible: true,
+    ocrRequired: true,
+    ocrPrimaryTown: true,
+    ocrPrimaryFuneralDate: true,
     wpUploadsMaxAgeMonths: 2,
   },
   {
@@ -421,20 +424,7 @@ function extractImage($, preferLinkedJpg) {
 
 // Pattern che segnalano l'inizio di sezioni di "rumore" (sidebar, footer, altri necrologi, form)
 // che non appartengono al testo del singolo necrologio.
-const BODY_TEXT_CUTOFF_REGEX = /(?:
-  mostra\s+altri\s+necrologi |
-  altri\s+necrologi |
-  post\s+(?:pi[uù]\s+recente|meno\s+recente) |
-  articolo\s+(?:successivo|precedente) |
-  invia\s+messaggio |
-  lascia\s+un\s+(?:messaggio|commento) |
-  condividi\s+(?:su|il\s+tuo) |
-  iscriviti\s+alla\s+newsletter |
-  privacy\s+policy |
-  utilizziamo\s+i\s+cookie |
-  tutti\s+i\s+diritti\s+riservati |
-  designed\s+by
-)/ix;
+const BODY_TEXT_CUTOFF_REGEX = /(?:mostra\s+altri\s+necrologi|altri\s+necrologi|post\s+(?:pi[uù]\s+recente|meno\s+recente)|articolo\s+(?:successivo|precedente)|invia\s+messaggio|lascia\s+un\s+(?:messaggio|commento)|condividi\s+(?:su|il\s+tuo)|iscriviti\s+alla\s+newsletter|privacy\s+policy|utilizziamo\s+i\s+cookie|tutti\s+i\s+diritti\s+riservati|designed\s+by)/i;
 
 function applyGeneralCutoff(text) {
   if (!text) return text;
@@ -455,6 +445,17 @@ function extractDetailBodyText($, source) {
   if (source.id === "san_osvaldo") {
     const bodyText = normalizeText($("article, main, .post, .entry-content, body").first().text());
     const cutoffMatch = bodyText.match(/^(.*?)(?:\bO\.?F\.?\s*S\.?\s*Osvaldo\b)/i);
+    if (cutoffMatch && cutoffMatch[1]) {
+      return normalizeText(cutoffMatch[1]);
+    }
+    return applyGeneralCutoff(bodyText);
+  }
+
+  if (source.id === "san_pietro_faldon") {
+    const bodyText = normalizeText($("article, main, .post, .entry-content, body").first().text());
+    const cutoffMatch = bodyText.match(
+      /^(.*?)(?:\bCONTATTACI\b|\bSede di SAN PIETRO DI FELETTO\b|\bPompe Funebri Cappella Maggiore\b)/i
+    );
     if (cutoffMatch && cutoffMatch[1]) {
       return normalizeText(cutoffMatch[1]);
     }
@@ -549,6 +550,7 @@ function isOldByWpUploadsMonth(url, maxAgeMonths) {
 
 async function scrapeDetail(entry, source, options, ocrState, aiState) {
   try {
+    const downloadedAt = new Date().toISOString();
     const html = await fetchHtml(entry.url);
     const $ = cheerio.load(html);
 
@@ -573,20 +575,29 @@ async function scrapeDetail(entry, source, options, ocrState, aiState) {
     }
     const bodyText = extractDetailBodyText($, source);
     const contextText = `${personTitle || title} ${bodyText}`;
-    let town = findTown(contextText, options.towns);
+    const htmlTown = findTown(contextText, options.towns);
+    let town = htmlTown;
 
-    let funeralDate =
+    const htmlFuneralDate =
       source.funeralDateListHintFirst
         ? (entry.listDateHint || extractFuneralDate(bodyText) || null)
         : (extractFuneralDate(bodyText) || entry.listDateHint || null);
+    let funeralDate = htmlFuneralDate;
 
     const ocrEligibleSource = Boolean(source.ocrEligible);
+    const ocrRequired = Boolean(source.ocrRequired);
     const mustRunOcr =
-      options.enable_ocr &&
+      (options.enable_ocr || ocrRequired) &&
       ocrEligibleSource &&
       !hiddenByWpUploads &&
-      ocrState.used < options.ocr_max_items_per_run &&
-      (!options.ocr_only_when_missing || !town || !funeralDate);
+      (ocrRequired || ocrState.used < options.ocr_max_items_per_run) &&
+      (ocrRequired || !options.ocr_only_when_missing || !town || !funeralDate);
+
+    if (ocrRequired) {
+      console.info(
+        `[scraper] OCR obbligatorio: source=${source.id} htmlTown=${htmlTown || "n.d."} htmlFuneralDate=${htmlFuneralDate || "n.d."} image=${imageUrl || "n.d."}`
+      );
+    }
 
     let ocrUsed = false;
     let ocrConfidence = null;
@@ -602,14 +613,29 @@ async function scrapeDetail(entry, source, options, ocrState, aiState) {
           ocrText = normalizeText(ocr.text || "");
         }
 
-        if (!town && ocr.town) {
+        if (source.ocrPrimaryTown && ocr.town) {
+          town = ocr.town;
+        } else if (!town && ocr.town) {
           town = ocr.town;
         }
-        if (!funeralDate && ocr.funeralDate) {
+        if (source.ocrPrimaryFuneralDate && ocr.funeralDate) {
+          funeralDate = ocr.funeralDate;
+        } else if (!funeralDate && ocr.funeralDate) {
           funeralDate = ocr.funeralDate;
         }
       } catch (error) {
         console.warn(`[ocr] Errore OCR su ${entry.url}: ${error.message}`);
+      }
+    }
+
+    if (ocrRequired) {
+      if (!ocrUsed) {
+        console.info(`[scraper] Scartato: OCR richiesto ma non eseguito o immagine non valida | source=${source.id} url=${entry.url}`);
+        return null;
+      }
+      if (!town) {
+        console.info(`[scraper] Scartato: OCR richiesto ma paese non trovato | source=${source.id} url=${entry.url}`);
+        return null;
       }
     }
 
@@ -660,7 +686,8 @@ async function scrapeDetail(entry, source, options, ocrState, aiState) {
       ocr_used: ocrUsed,
       ocr_confidence: ocrConfidence,
       hidden_old: hiddenOld,
-      scraped_at: new Date().toISOString(),
+      downloaded_at: downloadedAt,
+      scraped_at: downloadedAt,
     };
   } catch (error) {
     console.warn(`[scraper] Errore dettaglio ${entry.url}: ${error.message}`);
@@ -720,6 +747,7 @@ async function scrapeSource(source, options, onProgress, existingItems) {
         detail = {
           ...existingItem,
           hidden_old: hiddenOld,
+          downloaded_at: existingItem.downloaded_at || existingItem.scraped_at || null,
         };
         }
       } else {

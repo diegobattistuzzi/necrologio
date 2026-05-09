@@ -122,18 +122,32 @@
       font-size: 0.98rem;
       line-height: 1.25;
     }
-    .source-badge {
-      display: inline-block;
-      margin: 0 0 8px;
-      padding: 4px 8px;
+    .town-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin: 0 0 10px;
+      padding: 5px 10px;
       border-radius: 999px;
-      background: #f7e3d2;
-      color: #7c2d12;
-      border: 1px solid #edc4a5;
-      font-size: 0.75rem;
-      font-weight: 700;
+      background: #efe3cf;
+      color: #6f3b10;
+      border: 1px solid #dcc09b;
+      font-size: 0.78rem;
+      font-weight: 800;
       letter-spacing: 0.02em;
       text-transform: uppercase;
+    }
+    .meta-minor {
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+    .meta-minor a {
+      margin: 0;
+      font-size: inherit;
+      font-weight: 600;
     }
     .content p {
       margin: 0 0 4px;
@@ -198,9 +212,53 @@
       font-size: 0.87rem;
       margin: 0 0 4px;
       padding: 4px 0;
+    }
+    .summary-line {
       display: flex;
       align-items: center;
       justify-content: space-between;
+      gap: 12px;
+    }
+    .summary-main {
+      min-width: 0;
+    }
+    .summary-main strong a {
+      color: inherit;
+      text-decoration: none;
+    }
+    .summary-main strong a:hover {
+      text-decoration: underline;
+    }
+    .summary-meta {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+    .summary-actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+    .summary-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding-top: 10px;
+    }
+    .btn-refresh-all {
+      border: 1px solid #c9b9aa;
+      background: #f7ede4;
+      color: #6f2a20;
+      border-radius: 999px;
+      padding: 8px 12px;
+      font-size: 0.82rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .btn-refresh-all:hover {
+      background: #f3e4d7;
     }
     .btn-rescan {
       background: none;
@@ -291,6 +349,11 @@
     .progress-info strong {
       color: var(--ink);
     }
+    .progress-stamp {
+      color: var(--muted);
+      font-size: 0.78rem;
+      margin-top: 8px;
+    }
   </style>
 </head>
 <body>
@@ -310,29 +373,6 @@
     <p>Necrologi vecchi nascosti: <%= hiddenCount %></p>
   </header>
   <main>
-    <% if (showSummary) { %>
-      <details class="summary-box" open>
-        <summary>
-          <span>📊 Riepilogo per sorgente</span>
-          <span><%= sourceCount %> sorgenti</span>
-        </summary>
-        <div class="summary-content">
-          <ul>
-            <% if (!sourceGroups.length) { %>
-              <li>Nessun dato disponibile</li>
-            <% } %>
-            <% sourceGroups.forEach((group) => { %>
-              <li>
-                <strong><%= group.label %></strong>: <%= group.count %>
-                <button class="btn-rescan" data-source-id="<%= group.sourceId %>" title="Rescan <%= group.label %>">🔄</button>
-                <button class="btn-reset" data-source-id="<%= group.sourceId %>" title="Cancella dati <%= group.label %>">🗑️</button>
-              </li>
-            <% }); %>
-          </ul>
-        </div>
-      </details>
-    <% } %>
-
     <% if (!items.length) { %>
       <div class="empty">Nessun necrologio disponibile al momento.</div>
     <% } else { %>
@@ -349,27 +389,75 @@
                 <% } %>
               </div>
               <div class="content">
-                <div class="source-badge"><%= item.source || item.source_id || "Sorgente sconosciuta" %></div>
+                <div class="town-pill">Paese: <%= item.paese || "n.d." %></div>
                 <h3><%= item.full_name %></h3>
                 <p><strong>Data funerale:</strong> <%= item.data_funerale || "n.d." %></p>
                 <% if (item.ora_funerale) { %>
                   <p><strong>Ora funerale:</strong> <%= item.ora_funerale %></p>
                 <% } %>
                 <p><strong>Età:</strong> <%= Number.isFinite(Number(item.anni)) ? String(Number(item.anni)) : "n.d." %></p>
-                <p><strong>Paese:</strong> <%= item.paese || "n.d." %></p>
                 <p><strong>Nome:</strong> <%= item.nome || "" %></p>
                 <p><strong>Cognome:</strong> <%= item.cognome || "" %></p>
                 <% if (item.parenti) { %><p><strong>Parenti:</strong> <%= item.parenti %></p><% } %>
                 <% if (item.luogo_funerale) { %><p><strong>Luogo funerale:</strong> <%= item.luogo_funerale %></p><% } %>
                 <% if (item.rosario) { %><p><strong>Rosario:</strong> <%= item.rosario %></p><% } %>
+                <p><strong>Scaricato:</strong> <%= item.displayDownloadedAt %></p>
                 <% if (item.obituary_url) { %>
                   <a href="<%= item.obituary_url %>" target="_blank" rel="noreferrer">Apri annuncio</a>
                 <% } %>
+                <div class="meta-minor">
+                  Agenzia funebre:
+                  <% if (item.source_url) { %>
+                    <a href="<%= item.source_url %>" target="_blank" rel="noreferrer"><%= item.displaySourceLabel %></a>
+                  <% } else { %>
+                    <span><%= item.displaySourceLabel %></span>
+                  <% } %>
+                </div>
               </div>
             </article>
           <% }); %>
         </div>
       </section>
+    <% } %>
+
+    <% if (showSummary) { %>
+      <details class="summary-box">
+        <summary>
+          <span>📊 Riepilogo sorgenti</span>
+          <span><%= sourceCount %> sorgenti</span>
+        </summary>
+        <div class="summary-content">
+          <ul>
+            <% if (!sourceGroups.length) { %>
+              <li>Nessun dato disponibile</li>
+            <% } %>
+            <% sourceGroups.forEach((group) => { %>
+              <li>
+                <div class="summary-line">
+                  <div class="summary-main">
+                    <strong>
+                      <% if (group.sourceUrl) { %>
+                        <a href="<%= group.sourceUrl %>" target="_blank" rel="noreferrer"><%= group.label %></a>
+                      <% } else { %>
+                        <%= group.label %>
+                      <% } %>
+                    </strong>
+                    <div class="summary-meta"><%= group.count %> necrologi · ultimo scaricamento <%= group.latestDownloadedAt %></div>
+                  </div>
+                  <div class="summary-actions">
+                    <button class="btn-rescan" data-source-id="<%= group.sourceId %>" title="Riscarica <%= group.label %>">🔄</button>
+                    <button class="btn-reset" data-source-id="<%= group.sourceId %>" title="Cancella dati <%= group.label %>">🗑️</button>
+                  </div>
+                </div>
+              </li>
+            <% }); %>
+          </ul>
+          <div class="summary-toolbar">
+            <div class="summary-meta">Riepilogo aggiornato: <%= sourceSummaryUpdatedAt %></div>
+            <button id="refreshAllBtn" class="btn-refresh-all" type="button">Riscarica da tutte</button>
+          </div>
+        </div>
+      </details>
     <% } %>
   </main>
 
@@ -382,13 +470,118 @@
         </div>
       </div>
       <div class="progress-info" id="progressInfo">
-        <div><strong>0</strong> / <strong id="progressTotal">0</strong> trovati</div>
+        <div id="progressCountLine"><strong id="progressCount">0</strong> / <strong id="progressTotal">0</strong> trovati</div>
         <div style="margin-top: 6px;" id="progressTitle2">Contattando sorgente...</div>
+        <div style="margin-top: 6px;" id="progressDetail"></div>
+        <div class="progress-stamp" id="progressStamp">--:--:--</div>
       </div>
     </div>
   </div>
 
   <script>
+    function formatEventTime(value) {
+      const date = value ? new Date(value) : new Date();
+      if (Number.isNaN(date.getTime())) return '--:--:--';
+      return date.toLocaleTimeString('it-IT');
+    }
+
+    function bindRefreshButton(btn, streamPathBuilder) {
+      btn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        const progressContainer = document.getElementById('progressContainer');
+        const progressTitle = document.getElementById('progressTitle');
+        const progressBarFill = document.getElementById('progressBarFill');
+        const progressCount = document.getElementById('progressCount');
+        const progressTotal = document.getElementById('progressTotal');
+        const progressTitle2 = document.getElementById('progressTitle2');
+        const progressDetail = document.getElementById('progressDetail');
+        const progressStamp = document.getElementById('progressStamp');
+
+        progressContainer.classList.add('active');
+        btn.disabled = true;
+        progressBarFill.style.background = 'linear-gradient(90deg, #4CAF50, #45a049)';
+        progressBarFill.style.width = '0%';
+        progressBarFill.textContent = '0%';
+        progressTitle.textContent = 'Scansione...';
+        progressTitle2.textContent = 'Contattando sorgente...';
+        progressCount.textContent = '0';
+        progressTotal.textContent = '0';
+        progressDetail.textContent = '';
+        progressStamp.textContent = formatEventTime();
+
+        const streamUrl = streamPathBuilder(btn);
+        const eventSource = new EventSource(streamUrl.toString());
+
+        eventSource.addEventListener('start', (ev) => {
+          const data = JSON.parse(ev.data);
+          progressTitle.textContent = 'Scansione: ' + data.source;
+          progressStamp.textContent = formatEventTime(data.at);
+        });
+
+        eventSource.addEventListener('source', (ev) => {
+          const data = JSON.parse(ev.data);
+          progressTitle.textContent = 'Sorgente ' + data.currentSource + '/' + data.totalSources + ': ' + data.source;
+          progressTitle2.textContent = 'Preparazione scansione...';
+          progressStamp.textContent = formatEventTime(data.at);
+        });
+
+        eventSource.addEventListener('progress', (ev) => {
+          const data = JSON.parse(ev.data);
+          progressBarFill.style.width = data.percent + '%';
+          progressBarFill.textContent = data.percent + '%';
+          progressCount.textContent = data.count;
+          progressTotal.textContent = data.total;
+          progressDetail.textContent = data.source + ' · ' + data.title;
+          progressStamp.textContent = formatEventTime(data.at);
+        });
+
+        eventSource.addEventListener('persist', (ev) => {
+          const data = JSON.parse(ev.data);
+          progressTitle2.textContent = data.status;
+          progressStamp.textContent = formatEventTime(data.at);
+        });
+
+        eventSource.addEventListener('merge', (ev) => {
+          const data = JSON.parse(ev.data);
+          progressTitle2.textContent = data.status;
+          progressStamp.textContent = formatEventTime(data.at);
+        });
+
+        eventSource.addEventListener('complete', (ev) => {
+          const data = JSON.parse(ev.data);
+          if (data.ok) {
+            progressBarFill.style.background = '#4CAF50';
+            progressTitle.textContent = '✓ Completato';
+            progressTitle2.textContent = data.count + ' necrologi caricati';
+            setTimeout(() => {
+              eventSource.close();
+              window.location.reload();
+            }, 1500);
+          } else {
+            progressTitle.textContent = '✗ Errore';
+            progressTitle2.textContent = data.error;
+            btn.disabled = false;
+          }
+        });
+
+        eventSource.addEventListener('error', (ev) => {
+          eventSource.close();
+          progressTitle.textContent = '✗ Errore';
+          try {
+            const data = JSON.parse(ev.data);
+            progressTitle2.textContent = data.error;
+          } catch {
+            progressTitle2.textContent = 'Errore durante la scansione';
+          }
+
+          setTimeout(() => {
+            progressContainer.classList.remove('active');
+            btn.disabled = false;
+          }, 2000);
+        });
+      });
+    }
+
     const toggleOldBtn = document.getElementById('toggleOldBtn');
     if (toggleOldBtn) {
       toggleOldBtn.addEventListener('click', () => {
@@ -404,81 +597,15 @@
     }
 
     document.querySelectorAll('.btn-rescan').forEach(btn => {
-      btn.addEventListener('click', async (e) => {
-        e.preventDefault();
-        const sourceId = btn.dataset.sourceId;
-        if (!sourceId) return;
-
-        const progressContainer = document.getElementById('progressContainer');
-        const progressTitle = document.getElementById('progressTitle');
-        const progressBarFill = document.getElementById('progressBarFill');
-        const progressInfo = document.getElementById('progressInfo');
-        const progressTitle2 = document.getElementById('progressTitle2');
-
-        progressContainer.classList.add('active');
-        btn.disabled = true;
-
-        const streamUrl = new URL('refresh-source-stream/' + encodeURIComponent(sourceId), window.location.href);
-        const eventSource = new EventSource(streamUrl.toString());
-
-        eventSource.addEventListener('start', (e) => {
-          const data = JSON.parse(e.data);
-          progressTitle.textContent = 'Scansione: ' + data.source;
-        });
-
-        eventSource.addEventListener('progress', (e) => {
-          const data = JSON.parse(e.data);
-          progressBarFill.style.width = data.percent + '%';
-          progressBarFill.textContent = data.percent + '%';
-          progressInfo.innerHTML = '<div><strong>' + data.count + '</strong> trovati</div><div style="margin-top: 6px;">📄 ' + data.title + '</div>';
-          document.getElementById('progressTotal').textContent = data.total;
-        });
-
-        eventSource.addEventListener('persist', (e) => {
-          const data = JSON.parse(e.data);
-          progressTitle2.textContent = data.status;
-          progressBarFill.style.width = '100%';
-          progressBarFill.textContent = '...';
-        });
-
-        eventSource.addEventListener('merge', (e) => {
-          const data = JSON.parse(e.data);
-          progressTitle2.textContent = data.status;
-        });
-
-        eventSource.addEventListener('complete', (e) => {
-          const data = JSON.parse(e.data);
-          if (data.ok) {
-            progressBarFill.style.background = '#4CAF50';
-            progressTitle.textContent = '✓ Completato';
-            progressTitle2.textContent = data.count + ' necrologi caricati';
-            setTimeout(() => {
-              eventSource.close();
-              window.location.reload();
-            }, 1500);
-          } else {
-            progressTitle.textContent = '✗ Errore';
-            progressTitle2.textContent = data.error;
-          }
-        });
-
-        eventSource.addEventListener('error', (e) => {
-          eventSource.close();
-          progressTitle.textContent = '✗ Errore';
-          try {
-            const data = JSON.parse(e.data);
-            progressTitle2.textContent = data.error;
-          } catch {
-            progressTitle2.textContent = 'Errore durante la scansione';
-          }
-
-          setTimeout(() => {
-            progressContainer.classList.remove('active');
-            btn.disabled = false;
-          }, 2000);
-        });
+      bindRefreshButton(btn, (button) => {
+        const sourceId = button.dataset.sourceId;
+        return new URL('refresh-source-stream/' + encodeURIComponent(sourceId), window.location.href);
       });
     });
+    const refreshAllBtn = document.getElementById('refreshAllBtn');
+    if (refreshAllBtn) {
+      bindRefreshButton(refreshAllBtn, () => new URL('refresh-stream', window.location.href));
+    }
     document.querySelectorAll('.btn-reset').forEach(btn => {
       btn.addEventListener('click', async (e) => {
         e.preventDefault();

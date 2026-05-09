@@ -519,12 +519,17 @@ content: >
   {% set base = 'http://a0d7b954-necrologi_zona_tv:8099/' %}
   {% set items = state_attr('sensor.necrologi_zona_tv', 'items') or [] %}
   <style>
-    .n-wrap{display:grid;gap:10px}
-    .n-card{display:grid;grid-template-columns:72px 1fr;gap:10px;padding:10px;border:1px solid #d7d2ca;border-radius:12px;background:#fff}
-    .n-img{width:72px;height:92px;object-fit:cover;border-radius:8px;background:#ece8e1}
-    .n-title{font-weight:700;font-size:14px;line-height:1.2}
-    .n-meta{font-size:12px;color:#5e6873;margin-top:4px}
-    .n-link{display:inline-block;margin-top:6px;padding:4px 8px;border-radius:8px;background:#8c2f39;color:#fff;text-decoration:none;font-size:12px}
+    .n-wrap{display:grid;gap:12px}
+    .n-card{display:grid;grid-template-columns:88px 1fr;gap:12px;padding:12px;border:1px solid #e0dbd3;border-radius:14px;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,0.06)}
+    .n-img{width:88px;height:110px;object-fit:cover;border-radius:10px;background:#ece8e1;border:1px solid #e0dbd3;flex-shrink:0}
+    .n-img-placeholder{width:88px;height:110px;border-radius:10px;background:#ece8e1;border:1px dashed #c8c2ba;display:flex;align-items:center;justify-content:center;font-size:10px;color:#9aa3ac;text-align:center;line-height:1.3;flex-shrink:0}
+    .n-body{display:flex;flex-direction:column;gap:4px;min-width:0}
+    .n-badge{display:inline-block;padding:2px 7px;border-radius:999px;background:#f7e3d2;color:#7c2d12;border:1px solid #edc4a5;font-size:10px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;margin-bottom:2px}
+    .n-title{font-weight:700;font-size:14px;line-height:1.25;color:#1e242b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .n-row{font-size:12px;color:#5e6873;display:flex;align-items:center;gap:4px}
+    .n-row strong{color:#1e242b;font-weight:600}
+    .n-divider{border:none;border-top:1px solid #ece8e1;margin:4px 0}
+    .n-link{display:inline-block;margin-top:6px;padding:5px 10px;border-radius:8px;background:#8c2f39;color:#fff;text-decoration:none;font-size:11px;font-weight:700;letter-spacing:.02em}
   </style>
 
   <div class="n-wrap">
@@ -535,13 +540,28 @@ content: >
       {% if foto %}
         <img class="n-img" src="{{ foto }}" alt="{{ n.full_name }}">
       {% else %}
-        <div class="n-img"></div>
+        <div class="n-img-placeholder">Foto non disp.</div>
       {% endif %}
-      <div>
+      <div class="n-body">
+        {% if n.source or n.source_id %}
+          <span class="n-badge">{{ n.source or n.source_id }}</span>
+        {% endif %}
         <div class="n-title">{{ n.full_name }}</div>
-        <div class="n-meta">{{ n.paese or 'n.d.' }}{% if n.data_funerale %} • {{ n.data_funerale }}{% endif %}</div>
+        {% if n.paese %}
+          <div class="n-row">📍 {{ n.paese }}</div>
+        {% endif %}
+        {% if n.anni and n.anni | int(0) > 0 %}
+          <div class="n-row">🕯️ {{ n.anni }} anni</div>
+        {% endif %}
+        <hr class="n-divider">
+        {% if n.data_funerale %}
+          <div class="n-row"><strong>Funerale:</strong> {{ n.data_funerale }}{% if n.ora_funerale %} ore {{ n.ora_funerale }}{% endif %}</div>
+        {% endif %}
+        {% if n.luogo_funerale %}
+          <div class="n-row">⛪ {{ n.luogo_funerale }}</div>
+        {% endif %}
         {% if n.obituary_url %}
-          <a class="n-link" href="{{ n.obituary_url }}" target="_blank" rel="noreferrer">Apri annuncio</a>
+          <a class="n-link" href="{{ n.obituary_url }}" target="_blank" rel="noreferrer">Apri annuncio →</a>
         {% endif %}
       </div>
     </div>

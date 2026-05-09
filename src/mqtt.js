@@ -1,4 +1,5 @@
 const mqtt = require("mqtt");
+const { SOURCES } = require("./scraper");
 
 let client = null;
 let connected = false;
@@ -47,20 +48,51 @@ function publish(topic, payload, retain) {
 function buildSummary(items, updatedAt) {
   const visibleItems = (items || []).filter((item) => item && !item.hidden_old);
   const bySource = {};
+  const bySourceDetails = {};
   const byTown = {};
+  let latestDownloadedAt = null;
+  let latestDownloadedTs = 0;
 
   for (const item of visibleItems) {
     const sourceId = item.source_id || "sconosciuta";
     const town = item.paese || "Non specificato";
+    const downloadedAt = item.downloaded_at || item.scraped_at || null;
+    const downloadedTs = Date.parse(downloadedAt || "");
     bySource[sourceId] = (bySource[sourceId] || 0) + 1;
     byTown[town] = (byTown[town] || 0) + 1;
+
+    if (!bySourceDetails[sourceId]) {
+      bySourceDetails[sourceId] = {
+        count: 0,
+        label: item.source || sourceId,
+        url: item.source_url || item.obituary_url || "",
+        latest_downloaded_at: null,
+      };
+    }
+
+    bySourceDetails[sourceId].count += 1;
+    if (item.source_url && !bySourceDetails[sourceId].url) {
+      bySourceDetails[sourceId].url = item.source_url;
+    }
+    if (Number.isFinite(downloadedTs)) {
+      const currentSourceTs = Date.parse(bySourceDetails[sourceId].latest_downloaded_at || "");
+      if (!Number.isFinite(currentSourceTs) || downloadedTs > currentSourceTs) {
+        bySourceDetails[sourceId].latest_downloaded_at = downloadedAt;
+      }
+      if (downloadedTs > latestDownloadedTs) {
+        latestDownloadedTs = downloadedTs;
+        latestDownloadedAt = downloadedAt;
+      }
+    }
   }
 
   return {
     count: visibleItems.length,
     updated_at: updatedAt,
     by_source: bySource,
+    by_source_details: bySourceDetails,
     by_town: byTown,
+    latest_downloaded_at: latestDownloadedAt,
   };
 }
 
@@ -98,15 +130,28 @@ function publishDiscovery(config, items) {
       valueTemplate: "{{ value_json.updated_at }}",
       icon: "mdi:clock-outline",
     },
+    {
+      id: "latest_downloaded_at",
+      name: "Necrologi Ultimo Scaricamento",
+      valueTemplate: "{{ value_json.latest_downloaded_at }}",
+      icon: "mdi:download-clock-outline",
+    },
   ];
 
-  for (const sourceId of Object.keys(buildSummary(items, null).by_source)) {
+  for (const source of SOURCES) {
+    const sourceId = source.id;
     sensors.push({
       id: `source_${slugify(sourceId)}`,
-      name: `Necrologi ${sourceId}`,
+      name: `Necrologi ${source.label || sourceId}`,
       valueTemplate: `{{ value_json.by_source.${sourceId} | default(0) }}`,
       icon: "mdi:web",
       unit: "annunci",
+    });
+    sensors.push({
+      id: `source_${slugify(sourceId)}_last_download`,
+      name: `Necrologi ${source.label || sourceId} ultimo scaricamento`,
+      valueTemplate: `{{ value_json.by_source_details.${sourceId}.latest_downloaded_at | default('') }}`,
+      icon: "mdi:download-clock-outline",
     });
   }
 

@@ -1,3 +1,5 @@
+require("./logger");
+
 const express = require("express");
 const path = require("path");
 const { loadConfig } = require("./config");
@@ -142,23 +144,33 @@ function buildSummaryViewModel(items, updatedAt, includeHidden, hiddenCount, sel
   const groupsBySourceId = new Map();
 
   for (const source of SOURCES) {
-    groupsBySourceId.set(source.id, { items: [], label: source.label || source.id });
+    groupsBySourceId.set(source.id, {
+      items: [],
+      label: source.label || source.id,
+      sourceUrl: source.listUrl || "",
+    });
   }
 
   for (const item of items) {
     const sourceIdKey = item.source_id || "sconosciuta";
     if (!groupsBySourceId.has(sourceIdKey)) {
-      groupsBySourceId.set(sourceIdKey, { items: [], label: item.source || "Sconosciuta" });
+      groupsBySourceId.set(sourceIdKey, {
+        items: [],
+        label: item.source || "Sconosciuta",
+        sourceUrl: item.source_url || item.obituary_url || "",
+      });
     }
     groupsBySourceId.get(sourceIdKey).items.push(item);
   }
 
   const sourceGroups = Array.from(groupsBySourceId.entries())
     .sort((a, b) => b[1].items.length - a[1].items.length)
-    .map(([sourceId, { items: sourceItems, label }]) => ({
+    .map(([sourceId, { items: sourceItems, label, sourceUrl }]) => ({
       sourceId,
       label,
+      sourceUrl,
       count: sourceItems.length,
+      latestDownloadedAt: getLatestDownloadedAt(sourceItems),
     }));
 
   const sortedItems = [...(items || [])].sort(
@@ -166,15 +178,56 @@ function buildSummaryViewModel(items, updatedAt, includeHidden, hiddenCount, sel
   );
 
   return {
-    updatedAt: updatedAt || "mai",
+    updatedAt: formatDisplayDateTime(updatedAt) === "n.d." ? "mai" : formatDisplayDateTime(updatedAt),
     includeHidden: Boolean(includeHidden),
     hiddenCount: Number(hiddenCount || 0),
     selectedTown: normalizeTownLabel(selectedTown),
     showSummary: Boolean(showSummary),
+    sourceSummaryUpdatedAt: formatDisplayDateTime(updatedAt),
     sourceGroups,
     sourceCount: groupsBySourceId.size,
-    items: sortedItems,
+    items: sortedItems.map((item) => ({
+      ...item,
+      displayDownloadedAt: formatDisplayDateTime(item.downloaded_at || item.scraped_at),
+      displaySourceLabel: item.source || item.source_id || "Sorgente sconosciuta",
+    })),
   };
+}
+
+function getLatestDownloadedAt(items) {
+  let latestValue = "";
+  let latestTs = 0;
+
+  for (const item of items || []) {
+    const value = item?.downloaded_at || item?.scraped_at || "";
+    const ts = Date.parse(value);
+    if (!Number.isFinite(ts)) {
+      continue;
+    }
+    if (ts > latestTs) {
+      latestTs = ts;
+      latestValue = value;
+    }
+  }
+
+  return formatDisplayDateTime(latestValue);
+}
+
+function formatDisplayDateTime(value) {
+  const ts = Date.parse(value || "");
+  if (!Number.isFinite(ts)) {
+    return "n.d.";
+  }
+
+  return new Intl.DateTimeFormat("it-IT", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(new Date(ts));
 }
 
 function normalizeTownLabel(value) {
@@ -239,6 +292,98 @@ async function refreshData() {
     state.lastError = error.message;
     console.error("[refresh] Errore:", error);
     return { skipped: false, error: error.message };
+  } finally {
+    state.running = false;
+  }
+}
+
+async function refreshAllWithProgress(sendEvent) {
+  if (state.running) {
+    return { skipped: true, reason: "already_running" };
+  }
+
+  state.running = true;
+  state.lastError = null;
+
+  try {
+    const previousItems = state.items;
+    const allItems = [];
+    let completedSources = 0;
+
+    sendEvent("start", {
+      source: "Tutte le sorgenti",
+      status: "Inizio scansione completa...",
+      at: new Date().toISOString(),
+      totalSources: SOURCES.length,
+    });
+
+    for (const source of SOURCES) {
+      sendEvent("source", {
+        sourceId: source.id,
+        source: source.label,
+        currentSource: completedSources + 1,
+        totalSources: SOURCES.length,
+        at: new Date().toISOString(),
+      });
+
+      let sourceItems = await scrapeSource(source, config, (progress) => {
+        const sourcePercent = progress.total > 0
+          ? Math.round((progress.current / progress.total) * 100)
+          : 100;
+        const overallPercent = Math.round(((completedSources + (progress.current / Math.max(progress.total, 1))) / SOURCES.length) * 100);
+        sendEvent("progress", {
+          current: progress.current,
+          total: progress.total,
+          title: progress.title,
+          count: progress.count,
+          percent: overallPercent,
+          source_percent: sourcePercent,
+          source: source.label,
+          currentSource: completedSources + 1,
+          totalSources: SOURCES.length,
+          at: new Date().toISOString(),
+        });
+      }, previousItems);
+
+      if (config.save_images) {
+        sendEvent("persist", {
+          status: `Download immagini: ${source.label}`,
+          source: source.label,
+          at: new Date().toISOString(),
+        });
+        sourceItems = await persistImages(sourceItems);
+      }
+
+      allItems.push(...sourceItems);
+      completedSources += 1;
+    }
+
+    sendEvent("merge", { status: "Merge finale e pubblicazione...", at: new Date().toISOString() });
+
+    const uniqueMap = new Map();
+    for (const item of allItems) {
+      uniqueMap.set(item.id, item);
+    }
+
+    state.items = Array.from(uniqueMap.values()).sort((a, b) => {
+      const aDate = dateToSortableNumber(a.data_funerale);
+      const bDate = dateToSortableNumber(b.data_funerale);
+      return bDate - aDate;
+    });
+    state.lastUpdate = new Date().toISOString();
+    writeData(state.items);
+    await publishMqttUpdate({
+      config,
+      items: state.items,
+      updatedAt: state.lastUpdate,
+      newItems: getNewItems(previousItems, state.items),
+    });
+
+    return { ok: true, count: state.items.length, last_update: state.lastUpdate };
+  } catch (error) {
+    state.lastError = error.message;
+    console.error("[refresh-stream] Errore refresh globale:", error);
+    return { ok: false, error: error.message };
   } finally {
     state.running = false;
   }
@@ -475,7 +620,7 @@ app.get("/refresh-source-stream/:sourceId", (req, res) => {
       if (forceReprocess) {
         console.info(`[scraper] Forzato reprocess senza cache (stream): source=${source.id}`);
       }
-      sendEvent("start", { source: source.label, status: "Inizio scansione..." });
+      sendEvent("start", { source: source.label, status: "Inizio scansione...", at: new Date().toISOString() });
 
       let sourceItems = await scrapeSource(source, config, (progress) => {
         sendEvent("progress", {
@@ -484,16 +629,18 @@ app.get("/refresh-source-stream/:sourceId", (req, res) => {
           title: progress.title,
           count: progress.count,
           percent: Math.round((progress.current / progress.total) * 100),
+          source: source.label,
+          at: new Date().toISOString(),
         });
       }, forceReprocess ? [] : previousItems);
 
-      sendEvent("persist", { status: "Download immagini..." });
+      sendEvent("persist", { status: "Download immagini...", at: new Date().toISOString() });
 
       if (config.save_images) {
         sourceItems = await persistImages(sourceItems);
       }
 
-      sendEvent("merge", { status: "Merge con dati precedenti..." });
+      sendEvent("merge", { status: "Merge con dati precedenti...", at: new Date().toISOString() });
 
       const sourceUrlSet = new Set(sourceItems.map((item) => item.id));
       const otherItems = state.items.filter((item) => !sourceUrlSet.has(item.id));
@@ -522,6 +669,7 @@ app.get("/refresh-source-stream/:sourceId", (req, res) => {
         count: sourceItems.length,
         source: source.label,
         last_update: state.lastUpdate,
+        at: new Date().toISOString(),
       });
 
       res.end();
@@ -531,11 +679,34 @@ app.get("/refresh-source-stream/:sourceId", (req, res) => {
       sendEvent("error", {
         ok: false,
         error: error.message,
+        at: new Date().toISOString(),
       });
       res.end();
     } finally {
       state.running = false;
     }
+  })();
+});
+
+app.get("/refresh-stream", (req, res) => {
+  if (state.running) {
+    return res.status(409).json({ ok: false, error: "Already scanning" });
+  }
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+
+  const sendEvent = (event, data) => {
+    res.write(`event: ${event}\n`);
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  (async () => {
+    const result = await refreshAllWithProgress(sendEvent);
+    sendEvent("complete", result);
+    res.end();
   })();
 });
 
