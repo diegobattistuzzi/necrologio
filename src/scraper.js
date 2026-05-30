@@ -2,6 +2,7 @@ const axios = require("axios");
 const cheerio = require("cheerio");
 const {
   normalizeText,
+  normalizeForMatch,
   absoluteUrl,
   splitName,
   cleanPersonTitle,
@@ -151,6 +152,25 @@ const SOURCES = [
     type: "boscaia",
     ocrEligible: true,
   },
+  {
+    id: "necrologieonline_tarzo",
+    label: "NecrologieOnline Tarzo",
+    listUrl: "https://www.necrologieonline.org/necrologie.php?ido=52",
+    type: "necrologieonline",
+    structuredTownOnly: true,
+  },
+  {
+    id: "ofdassie",
+    label: "Onoranze Funebri D'Assie",
+    listUrl: "https://www.ofdassie.com/necrologi/",
+    type: "ofdassie",
+    listingRule: {
+      detailSelector: ".all-necrologi .necrologio-single-content > a[href*='/necrologio/']",
+      skipListPageRegex: /\/necrologi\/?(?:\?.*)?$/i,
+      requiredHostIncludes: "www.ofdassie.com",
+    },
+    ocrEligible: true,
+  },
 ];
 
 async function fetchHtml(url) {
@@ -185,7 +205,7 @@ function parseListing($, source, maxItems) {
     return match ? normalizeText(match[2]) : null;
   }
 
-  function push(link, title, listDateHint, listImageUrl) {
+  function push(link, title, listDateHint, listImageUrl, extra = {}) {
     const url = absoluteUrl(source.listUrl, link);
     const cleanTitle = normalizeText(title);
     if (!url || !cleanTitle) {
@@ -200,7 +220,39 @@ function parseListing($, source, maxItems) {
       title: cleanTitle,
       listDateHint: normalizeText(listDateHint),
       listImageUrl: listImageUrl ? absoluteUrl(source.listUrl, listImageUrl) : null,
+      ...extra,
     });
+  }
+
+  function extractInfoBoxValue(container, labelRegex) {
+    let result = null;
+    container.find(".space_bottom").each((_, el) => {
+      if (result) {
+        return;
+      }
+
+      const text = normalizeText($(el).text());
+      if (labelRegex.test(text)) {
+        result = normalizeText($(el).find("strong").first().text());
+      }
+    });
+
+    return result;
+  }
+
+  function normalizeFuneralTimeFromText(text) {
+    const match = normalizeText(text).match(/\balle\s+ore\s*(\d{1,2})[:.](\d{2})\b/i);
+    if (!match) {
+      return null;
+    }
+
+    const hh = Number(match[1]);
+    const mm = Number(match[2]);
+    if (hh < 0 || hh > 23 || mm < 0 || mm > 59) {
+      return null;
+    }
+
+    return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
   }
 
   function parseStandardLinks(rule, options = {}) {
@@ -327,6 +379,12 @@ function parseListing($, source, maxItems) {
     parseStandardLinks(source.listingRule);
   }
 
+  if (source.type === "ofdassie") {
+    parseStandardLinks(source.listingRule, {
+      cardSelector: ".necrologio-single, .col-lg-4, article, li, div",
+    });
+  }
+
   if (source.type === "boscaia") {
     $("h3").each((_, el) => {
       const h3 = $(el);
@@ -353,6 +411,45 @@ function parseListing($, source, maxItems) {
       const containerText = normalizeText(container.text());
       const dateHint = extractDateFromText(containerText);
       push(vepiHref, title, dateHint, imgSrc || null);
+    });
+  }
+
+  if (source.type === "necrologieonline") {
+    $(".property-row").each((index, el) => {
+      const row = $(el);
+      const content = row.find(".property-row-content").first();
+      const title = normalizeText(content.find(".property-row-title").first().text());
+      if (!title || title.split(" ").length < 2 || isNoiseTitle(title)) {
+        return;
+      }
+
+      const bodyText = normalizeText(content.text());
+      const townHint = extractInfoBoxValue(content, /comune\s+di\s*:/i);
+      const funeralDate = extractFuneralDate(bodyText);
+      const imageUrl = row.find(".property-row-picture img").first().attr("src");
+      const idHref = row.find("a[href*='idd=']").first().attr("href") || "";
+      const idMatch = idHref.match(/[?&]idd=(\d+)/i);
+      const anchor = idMatch ? `#idd-${idMatch[1]}` : `#item-${index + 1}`;
+      const subtitleText = normalizeText(content.find(".property-row-subtitle").first().text());
+      const ageMatch = subtitleText.match(/\banni\s+(\d{1,3})\b/i);
+      const ceremonyBlock = content.find(".col-lg-12.space_bottom").filter((_, block) =>
+        /cerimonia/i.test(normalizeText($(block).text()))
+      ).first();
+      const ceremonyPlace = normalizeText(ceremonyBlock.find("strong").eq(0).text());
+      const ceremonyTown = normalizeText(ceremonyBlock.find("strong").eq(1).text());
+      const rosaryText = normalizeText(content.find("#frase_footer").first().text());
+
+      push(anchor, title, funeralDate, imageUrl, {
+        detailBodyText: bodyText,
+        townHint,
+        extractedDetails: {
+          anni: ageMatch ? Number(ageMatch[1]) : null,
+          data_funerale: funeralDate,
+          ora_funerale: normalizeFuneralTimeFromText(bodyText),
+          luogo_funerale: normalizeText([ceremonyPlace, ceremonyTown ? `di ${ceremonyTown}` : ""].filter(Boolean).join(" ")) || null,
+          rosario: /rosario/i.test(rosaryText) ? rosaryText : null,
+        },
+      });
     });
   }
 
@@ -496,6 +593,15 @@ function chooseHigherDate(...values) {
   return best;
 }
 
+function findConfiguredTown(value, configuredTowns) {
+  const key = normalizeForMatch(value);
+  if (!key) {
+    return null;
+  }
+
+  return (configuredTowns || []).find((town) => normalizeForMatch(town) === key) || null;
+}
+
 function deriveNameFromObituaryUrl(url) {
   try {
     const pathname = new URL(url).pathname;
@@ -551,11 +657,20 @@ function isOldByWpUploadsMonth(url, maxAgeMonths) {
 async function scrapeDetail(entry, source, options, ocrState, aiState) {
   try {
     const downloadedAt = new Date().toISOString();
-    const html = await fetchHtml(entry.url);
-    const $ = cheerio.load(html);
+    let bodyText = normalizeText(entry.detailBodyText || "");
+    let detailImageUrl = null;
+    let title = normalizeText(entry.title);
 
-    const extractedTitle = extractBestTitle($, entry.title);
-    const title = isNoiseTitle(extractedTitle) ? normalizeText(entry.title) : extractedTitle;
+    if (!bodyText) {
+      const html = await fetchHtml(entry.url);
+      const $ = cheerio.load(html);
+
+      const extractedTitle = extractBestTitle($, entry.title);
+      title = isNoiseTitle(extractedTitle) ? normalizeText(entry.title) : extractedTitle;
+      detailImageUrl = absoluteUrl(entry.url, extractImage($, Boolean(source.preferLinkedImage)));
+      bodyText = extractDetailBodyText($, source);
+    }
+
     let personTitle = cleanPersonTitle(title);
     if (!personTitle || isNoiseTitle(personTitle)) {
       const fallbackFromUrl = deriveNameFromObituaryUrl(entry.url);
@@ -567,15 +682,14 @@ async function scrapeDetail(entry, source, options, ocrState, aiState) {
     if (isNoiseTitle(personTitle || title)) {
       return null;
     }
-    const detailImageUrl = absoluteUrl(entry.url, extractImage($, Boolean(source.preferLinkedImage)));
     const imageUrl = entry.listImageUrl || detailImageUrl;
     const hiddenByWpUploads = isOldByWpUploadsMonth(imageUrl, source.wpUploadsMaxAgeMonths);
     if (hiddenByWpUploads) {
       console.info(`[scraper] Nascosto da wp-content/uploads vecchio: source=${source.id} title=${personTitle || title} image=${imageUrl}`);
     }
-    const bodyText = extractDetailBodyText($, source);
     const contextText = `${personTitle || title} ${bodyText}`;
-    const htmlTown = findTown(contextText, options.towns);
+    const townHint = findConfiguredTown(entry.townHint, options.towns);
+    const htmlTown = source.structuredTownOnly ? townHint : (townHint || findTown(contextText, options.towns));
     let town = htmlTown;
 
     const htmlFuneralDate =
@@ -651,7 +765,8 @@ async function scrapeDetail(entry, source, options, ocrState, aiState) {
     const extracted = aiInputText
       ? await extractAnnouncementDetails(aiInputText, options, aiState)
       : { ai_used: false };
-    funeralDate = chooseHigherDate(funeralDate, extracted.data_funerale);
+    const entryDetails = entry.extractedDetails || {};
+    funeralDate = chooseHigherDate(funeralDate, entryDetails.data_funerale, extracted.data_funerale);
 
     const finalTitle = personTitle || title;
     const split = splitName(finalTitle.replace(/\s+-\s+.*$/, ""));
@@ -677,11 +792,11 @@ async function scrapeDetail(entry, source, options, ocrState, aiState) {
       foto: imageUrl,
       paese: town,
       data_funerale: funeralDate,
-      ora_funerale: extracted.ora_funerale || null,
-      anni: extracted.anni || null,
-      parenti: extracted.parenti,
-      luogo_funerale: extracted.luogo_funerale,
-      rosario: extracted.rosario,
+      ora_funerale: extracted.ora_funerale || entryDetails.ora_funerale || null,
+      anni: extracted.anni || entryDetails.anni || null,
+      parenti: extracted.parenti || entryDetails.parenti,
+      luogo_funerale: extracted.luogo_funerale || entryDetails.luogo_funerale,
+      rosario: extracted.rosario || entryDetails.rosario,
       ai_used: extracted.ai_used,
       ocr_used: ocrUsed,
       ocr_confidence: ocrConfidence,

@@ -1,6 +1,6 @@
 name: Necrologi Zona TV
 slug: necrologi_zona_tv
-version: "0.1.11"
+version: "0.1.13"
 description: Raccoglie necrologi per Orsago, Cordignano, Godega, San Fior e li espone via API.
 url: https://github.com/diegobattistuzzi/necrologio
 startup: services
@@ -54,6 +54,7 @@ options:
     - San Vendemiano
     - Santa Lucia di Piave
     - Codogne
+    - Tarzo
   log_level: info
 schema:
   scan_interval_minutes: int(10,1440)
