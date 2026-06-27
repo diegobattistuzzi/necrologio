@@ -1,5 +1,5 @@
 const mqtt = require("mqtt");
-const { SOURCES } = require("./scraper");
+const { SOURCES } = require("./sources");
 
 let client = null;
 let connected = false;
@@ -50,6 +50,7 @@ function buildSummary(items, updatedAt) {
   const bySource = {};
   const bySourceDetails = {};
   const byTown = {};
+  const byTownDetails = {};
   let latestDownloadedAt = null;
   let latestDownloadedTs = 0;
 
@@ -61,6 +62,14 @@ function buildSummary(items, updatedAt) {
     bySource[sourceId] = (bySource[sourceId] || 0) + 1;
     byTown[town] = (byTown[town] || 0) + 1;
 
+    if (!byTownDetails[town]) {
+      byTownDetails[town] = {
+        count: 0,
+        latest_downloaded_at: null,
+        items: [],
+      };
+    }
+
     if (!bySourceDetails[sourceId]) {
       bySourceDetails[sourceId] = {
         count: 0,
@@ -69,6 +78,9 @@ function buildSummary(items, updatedAt) {
         latest_downloaded_at: null,
       };
     }
+
+    byTownDetails[town].count += 1;
+    byTownDetails[town].items.push(buildTownItemAttribute(item));
 
     bySourceDetails[sourceId].count += 1;
     if (item.source_url && !bySourceDetails[sourceId].url) {
@@ -83,6 +95,10 @@ function buildSummary(items, updatedAt) {
         latestDownloadedTs = downloadedTs;
         latestDownloadedAt = downloadedAt;
       }
+      const currentTownTs = Date.parse(byTownDetails[town].latest_downloaded_at || "");
+      if (!Number.isFinite(currentTownTs) || downloadedTs > currentTownTs) {
+        byTownDetails[town].latest_downloaded_at = downloadedAt;
+      }
     }
   }
 
@@ -92,7 +108,27 @@ function buildSummary(items, updatedAt) {
     by_source: bySource,
     by_source_details: bySourceDetails,
     by_town: byTown,
+    by_town_details: byTownDetails,
     latest_downloaded_at: latestDownloadedAt,
+  };
+}
+
+function buildTownItemAttribute(item) {
+  return {
+    id: item.id || null,
+    full_name: item.full_name || null,
+    nome: item.nome || null,
+    cognome: item.cognome || null,
+    paese: item.paese || null,
+    data_funerale: item.data_funerale || null,
+    ora_funerale: item.ora_funerale || null,
+    luogo_funerale: item.luogo_funerale || null,
+    source: item.source || null,
+    source_id: item.source_id || null,
+    obituary_url: item.obituary_url || null,
+    foto_api_url: item.foto_api_url || null,
+    foto: item.foto || null,
+    downloaded_at: item.downloaded_at || item.scraped_at || null,
   };
 }
 
@@ -157,12 +193,14 @@ function publishDiscovery(config, items) {
 
   for (const town of config.towns || []) {
     const townKey = String(town || "");
+    const townTopic = `${baseTopic}/town/${slugify(townKey)}`;
     sensors.push({
       id: `town_${slugify(townKey)}`,
       name: `Necrologi ${townKey}`,
       valueTemplate: `{{ value_json.by_town['${townKey}'] | default(0) }}`,
       icon: "mdi:map-marker",
       unit: "annunci",
+      attributesTopic: townTopic,
     });
   }
 
@@ -179,6 +217,9 @@ function publishDiscovery(config, items) {
 
     if (sensor.unit) {
       payload.unit_of_measurement = sensor.unit;
+    }
+    if (sensor.attributesTopic) {
+      payload.json_attributes_topic = sensor.attributesTopic;
     }
 
     publish(topic, payload, true);
@@ -256,6 +297,26 @@ async function publishMqttUpdate({ config, items, updatedAt, newItems }) {
 
   publishDiscovery(config, items);
   publish(`${baseTopic}/summary`, summary, true);
+
+  for (const town of config.towns || []) {
+    const townKey = String(town || "");
+    const townSummary = summary.by_town_details?.[townKey] || {
+      count: 0,
+      latest_downloaded_at: null,
+      items: [],
+    };
+    publish(
+      `${baseTopic}/town/${slugify(townKey)}`,
+      {
+        town: townKey,
+        updated_at: updatedAt,
+        count: townSummary.count,
+        latest_downloaded_at: townSummary.latest_downloaded_at,
+        items: townSummary.items,
+      },
+      true
+    );
+  }
 
   if (Array.isArray(newItems) && newItems.length > 0) {
     console.log(`[mqtt] Pubblicazione ${newItems.length} nuovi necrologi su ${baseTopic}/new`);

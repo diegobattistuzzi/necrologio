@@ -289,6 +289,36 @@
       background-color: rgba(140, 47, 57, 0.12);
       opacity: 1;
     }
+    .btn-mqtt {
+      border: 1px solid #b0c4b8;
+      background: #eaf2ee;
+      color: #1e5c3a;
+      border-radius: 999px;
+      padding: 8px 12px;
+      font-size: 0.82rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .btn-mqtt:hover { background: #dceee5; }
+    .btn-mqtt:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-mqtt-new {
+      border: 1px solid #b0aac4;
+      background: #eeeaf2;
+      color: #3a1e5c;
+      border-radius: 999px;
+      padding: 8px 12px;
+      font-size: 0.82rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .btn-mqtt-new:hover { background: #e5dcea; }
+    .btn-mqtt-new:disabled { opacity: 0.5; cursor: not-allowed; }
+    .mqtt-toast {
+      display: none;
+      margin-top: 6px;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
     @keyframes spin {
       from { transform: rotate(0deg); }
       to { transform: rotate(360deg); }
@@ -389,7 +419,7 @@
                 <% } %>
               </div>
               <div class="content">
-                <div class="town-pill">Paese: <%= item.paese || "n.d." %></div>
+                <div class="town-pill"><%= item.paese || "n.d." %></div>
                 <h3><%= item.full_name %></h3>
                 <p><strong>Data funerale:</strong> <%= item.data_funerale || "n.d." %></p>
                 <% if (item.ora_funerale) { %>
@@ -455,6 +485,13 @@
           <div class="summary-toolbar">
             <div class="summary-meta">Riepilogo aggiornato: <%= sourceSummaryUpdatedAt %></div>
             <button id="refreshAllBtn" class="btn-refresh-all" type="button">Riscarica da tutte</button>
+          </div>
+          <div class="summary-toolbar" style="margin-top:8px;">
+            <div class="mqtt-toast" id="mqttToast"></div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              <button id="mqttRepublishBtn" class="btn-mqtt" type="button">📡 Reinvia stato MQTT</button>
+              <button id="mqttSimulateNewBtn" class="btn-mqtt-new" type="button">📡 Simula nuovi (MQTT)</button>
+            </div>
           </div>
         </div>
       </details>
@@ -606,6 +643,39 @@
     if (refreshAllBtn) {
       bindRefreshButton(refreshAllBtn, () => new URL('refresh-stream', window.location.href));
     }
+    async function mqttAction(btn, simulateNew) {
+      const toast = document.getElementById('mqttToast');
+      btn.disabled = true;
+      toast.style.display = 'block';
+      toast.textContent = '⏳ Invio in corso...';
+      try {
+        const url = new URL('mqtt-republish' + (simulateNew ? '?simulate_new=true' : ''), window.location.href);
+        const res = await fetch(url.toString(), { method: 'POST' });
+        const data = await res.json();
+        if (data.ok) {
+          toast.textContent = simulateNew
+            ? '✓ Notifica "nuovi" inviata (' + data.count + ' necrologi)'
+            : '✓ Stato MQTT reinviato (' + data.count + ' necrologi)';
+        } else {
+          toast.textContent = '✗ Errore: ' + (data.error || 'sconosciuto');
+        }
+      } catch (err) {
+        toast.textContent = '✗ Errore di rete: ' + err.message;
+      } finally {
+        btn.disabled = false;
+        setTimeout(() => { toast.style.display = 'none'; }, 4000);
+      }
+    }
+
+    const mqttRepublishBtn = document.getElementById('mqttRepublishBtn');
+    if (mqttRepublishBtn) {
+      mqttRepublishBtn.addEventListener('click', () => mqttAction(mqttRepublishBtn, false));
+    }
+    const mqttSimulateNewBtn = document.getElementById('mqttSimulateNewBtn');
+    if (mqttSimulateNewBtn) {
+      mqttSimulateNewBtn.addEventListener('click', () => mqttAction(mqttSimulateNewBtn, true));
+    }
+
     document.querySelectorAll('.btn-reset').forEach(btn => {
       btn.addEventListener('click', async (e) => {
         e.preventDefault();

@@ -575,6 +575,17 @@ app.post("/reset-source/:sourceId", (req, res) => {
   res.json({ ok: true, removed, last_update: state.lastUpdate });
 });
 
+app.post("/mqtt-republish", async (req, res) => {
+  const simulateNew = String(req.query.simulate_new || "").toLowerCase() === "true";
+  await publishMqttUpdate({
+    config,
+    items: state.items,
+    updatedAt: state.lastUpdate,
+    newItems: simulateNew ? getVisibleItems(state.items) : [],
+  });
+  res.json({ ok: true, simulate_new: simulateNew, count: getVisibleItems(state.items).length });
+});
+
 app.post("/refresh-source/:sourceId", async (req, res) => {
   const sourceId = (req.params.sourceId || "").toString().trim();
   if (!sourceId || !SOURCES.find((s) => s.id === sourceId)) {

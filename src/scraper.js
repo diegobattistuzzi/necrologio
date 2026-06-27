@@ -14,164 +14,9 @@ const {
 } = require("./utils");
 const { runOcrFromImage } = require("./ocr");
 const { extractAnnouncementDetails } = require("./ai_extraction");
+const { SOURCES } = require("./sources");
 
 const DEFAULT_WP_UPLOADS_MAX_AGE_MONTHS = 2;
-
-const SOURCES = [
-  {
-    id: "servizi_salvador",
-    label: "Servizi Salvador",
-    listUrl: "https://www.servizisalvador.it/necrologi/",
-    type: "salvador",
-    preferLinkedImage: true,
-    ocrEligible: true,
-  },
-  {
-    id: "ultimoviaggio",
-    label: "Ultimo Viaggio",
-    listUrl: "https://ultimoviaggio.it/necrologi/",
-    type: "ultimoviaggio",
-    ocrEligible: true,
-  },
-  {
-    id: "memorial",
-    label: "Memorial",
-    listUrl: "https://www.onoranzefunebrimemorial.it/necrologi/",
-    type: "memorial",
-    funeralDateListHintFirst: true,
-  },
-  {
-    id: "san_osvaldo",
-    label: "San Osvaldo",
-    listUrl: "https://onoranzefunebrisanosvaldo.it/necrologi/",
-    type: "sanosvaldo",
-    listingRule: {
-      detailSelector: "h2 a[href], h3 a[href]",
-      skipListPageRegex: /\/necrologi\/?$|\/necrologi\/page\//i,
-      requiredHostIncludes: "onoranzefunebrisanosvaldo.it",
-      blockedUrlRegex: /\/contattaci|\/servizi|\/privacy|\/privacy-policy|\/gestione-dei-cookie|\/category\//i,
-    },
-  },
-  {
-    id: "san_pietro_faldon",
-    label: "Onoranze Funebri San Pietro Faldon",
-    listUrl: "https://onoranzefunebrisanpietrofaldon.it/elenco-necrologi/",
-    type: "sanpietrofaldon",
-    listingRule: {
-      detailSelector: "h2 a[href*='/necrologi/'], h3 a[href*='/necrologi/']",
-      skipListPageRegex: /\/elenco-necrologi\/?$/i,
-      requiredHostIncludes: "onoranzefunebrisanpietrofaldon.it",
-      blockedUrlRegex: /\/privacy|\/cookie|\/contatti|\/servizi|\/chi-siamo|\/cerimonia/i,
-    },
-    ocrEligible: true,
-    ocrRequired: true,
-    ocrPrimaryTown: true,
-    ocrPrimaryFuneralDate: true,
-    wpUploadsMaxAgeMonths: 2,
-  },
-  {
-    id: "pfa_san_marco",
-    label: "PFA San Marco",
-    listUrl: "https://www.pfasanmarco.it/annunci-funebri/",
-    type: "pfasanmarco",
-  },
-  {
-    id: "zanette",
-    label: "Onoranze Funebri Zanette",
-    listUrl: "https://www.onoranzefunebrizanette.it/necrologi-cordogli-online-cordignano",
-    type: "zanette",
-    listingRule: {
-      detailSelector: ".postArticle a[href], a[data-blog-post-alias][href]",
-      skipListPageRegex: /\/necrologi-cordogli-online-cordignano\/?$/i,
-      blockedUrlRegex: /\/privacy|\/cookie|\/contatti|\/servizi|\/articoli/i,
-    },
-    ocrEligible: true,
-    swapFirstLastName: true,
-  },
-  {
-    id: "salamon",
-    label: "Pompe Funebri Salamon",
-    listUrl: "https://www.pompefunebrisalamon.com/condoglianze-online/",
-    type: "salamon",
-    listingRule: {
-      detailSelector: "h3 a[href*='/condoglianze-online/'], h2 a[href*='/condoglianze-online/']",
-      skipListPageRegex: /\/condoglianze-online\/?$/i,
-    },
-    preferLinkedImage: true,
-    ocrEligible: true,
-  },
-  {
-    id: "lapace_conegliano",
-    label: "Onoranze Funebri La Pace Conegliano",
-    listUrl: "https://www.onoranzefunebrilapaceconegliano.com/annunci-funebri/",
-    type: "lapace",
-    listingRule: {
-      detailSelector: "h2 a[href*='/annuncio/'], h3 a[href*='/annuncio/']",
-      skipListPageRegex: /\/annunci-funebri\/?$/i,
-      blockedUrlRegex: /\/privacy|\/cookie|\/contatti|\/servizi|\/storie-di-vita|\/socrem-tv/i,
-    },
-    preferLinkedImage: true,
-    ocrEligible: true,
-    reprocessWhenNameNoisy: true,
-  },
-  {
-    id: "zanardo",
-    label: "Agenzia Funebre Zanardo",
-    listUrl: "https://www.agenziafunebrezanardo.it/condoglianze-online/",
-    type: "zanardo",
-    listingRule: {
-      detailSelector: "h3 a[href*='/condoglianze-online/'], h2 a[href*='/condoglianze-online/']",
-      skipListPageRegex: /\/condoglianze-online\/?$/i,
-    },
-    preferLinkedImage: true,
-    ocrEligible: true,
-  },
-  {
-    id: "roman",
-    label: "Onoranze Funebri Roman",
-    listUrl: "https://www.ofroman.com/lista-annunci-db.php",
-    type: "roman",
-    ocrEligible: true,
-  },
-  {
-    id: "sandrin",
-    label: "Onoranze Funebri Sandrin",
-    listUrl: "https://www.onoranzefunebrisandrin.com/necrologi/",
-    type: "sandrin",
-    listingRule: {
-      detailSelector: "h2 a[href]",
-      skipListPageRegex: /\/necrologi\/?$/i,
-      blockedUrlRegex: /\/privacy|\/(cookie|contatti|servizi|chi-siamo|pubblicazione)/i,
-    },
-    ocrEligible: true,
-  },
-  {
-    id: "boscaia",
-    label: "Onoranze Funebri Boscaia",
-    listUrl: "https://boscaia.com/epigrafi.php",
-    type: "boscaia",
-    ocrEligible: true,
-  },
-  {
-    id: "necrologieonline_tarzo",
-    label: "NecrologieOnline Tarzo",
-    listUrl: "https://www.necrologieonline.org/necrologie.php?ido=52",
-    type: "necrologieonline",
-    structuredTownOnly: true,
-  },
-  {
-    id: "ofdassie",
-    label: "Onoranze Funebri D'Assie",
-    listUrl: "https://www.ofdassie.com/necrologi/",
-    type: "ofdassie",
-    listingRule: {
-      detailSelector: ".all-necrologi .necrologio-single-content > a[href*='/necrologio/']",
-      skipListPageRegex: /\/necrologi\/?(?:\?.*)?$/i,
-      requiredHostIncludes: "www.ofdassie.com",
-    },
-    ocrEligible: true,
-  },
-];
 
 async function fetchHtml(url) {
   const response = await axios.get(url, {
@@ -255,163 +100,106 @@ function parseListing($, source, maxItems) {
     return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
   }
 
-  function parseStandardLinks(rule, options = {}) {
+  function parseStandardLinks(rule) {
     if (!rule || !rule.detailSelector) {
       return;
     }
 
+    const cardSelector = rule.cardSelector || "article, li, div";
+
     $(rule.detailSelector).each((_, el) => {
       const href = $(el).attr("href");
-      const title = normalizeText($(el).text());
-      if (!href || !title) {
-        return;
-      }
-      if (isNoiseTitle(title)) {
-        return;
-      }
-      if (title.split(" ").length < 2) {
-        return;
-      }
-      if (rule.skipListPageRegex && rule.skipListPageRegex.test(href)) {
-        return;
-      }
-      if (rule.requiredHostIncludes && !href.includes(rule.requiredHostIncludes)) {
-        return;
-      }
-      if (rule.blockedUrlRegex && rule.blockedUrlRegex.test(href)) {
-        return;
+      let title = normalizeText($(el).text());
+
+      if (!href || !title) return;
+
+      // Skip on raw values before cleaning
+      if (rule.skipIfHrefEndsWith && href.endsWith(rule.skipIfHrefEndsWith)) return;
+      if (rule.skipIfTextMatches && rule.skipIfTextMatches.test(title)) return;
+      if (rule.textPrefixRequired && !rule.textPrefixRequired.test(title)) return;
+
+      // Clean title
+      if (rule.stripTextPrefix) title = normalizeText(title.replace(rule.stripTextPrefix, ""));
+      if (rule.stripTextRegex) title = normalizeText(title.replace(rule.stripTextRegex, ""));
+      if (rule.stripLeadingDate) title = normalizeText(title.replace(/^\d{1,2}[/.\-]\d{1,2}[/.\-]\d{2,4}\s*/i, ""));
+
+      if (!title) return;
+      if (isNoiseTitle(title)) return;
+
+      const minWords = rule.minTitleWords != null ? rule.minTitleWords : 2;
+      if (title.split(" ").length < minWords) return;
+
+      const minLen = rule.minTitleLength || 0;
+      if (title.length < minLen) return;
+
+      if (rule.skipListPageRegex && rule.skipListPageRegex.test(href)) return;
+      if (rule.requiredHostIncludes && !href.includes(rule.requiredHostIncludes)) return;
+      if (rule.blockedUrlRegex && rule.blockedUrlRegex.test(href)) return;
+
+      const card = $(el).closest(cardSelector);
+      const dateHint = rule.skipDateHint ? null : extractDateFromText(normalizeText(card.text()));
+
+      let listImageUrl = null;
+      if (rule.listImageStyleSelector) {
+        const styleEl = card.find(rule.listImageStyleSelector).first();
+        const bgUrl = extractBackgroundImageUrl(styleEl.attr("style"));
+        const srcUrl = rule.listImageSrcFromStyleSelector
+          ? card.find(rule.listImageSrcFromStyleSelector).first().attr("src") || null
+          : null;
+        listImageUrl = bgUrl || srcUrl || null;
+      } else if (rule.listImageSrcSelector) {
+        const imgSrc = card.find(rule.listImageSrcSelector).first().attr("src");
+        listImageUrl = imgSrc && !String(imgSrc).includes("background") ? imgSrc : null;
       }
 
-      const cardSelector = options.cardSelector || "article, li, div";
-      const parentText = normalizeText($(el).closest(cardSelector).text());
-      const dateHint = extractDateFromText(parentText);
-      const listImageUrl = options.extractListImage ? options.extractListImage($(el)) : null;
       push(href, title, dateHint, listImageUrl);
     });
   }
 
-  if (source.type === "salvador") {
-    $("a[href*='/necrologi/']").each((_, el) => {
-      const href = $(el).attr("href");
-      const text = normalizeText($(el).text());
-      if (!href || href.endsWith("/necrologi/") || !text || /invia cordoglio/i.test(text)) {
-        return;
-      }
+  function parseTitleLinks(rule) {
+    if (!rule || !rule.titleSelector || !rule.linkTextMatch) {
+      return;
+    }
 
-      const dateHint = extractDateFromText(text);
-      const cleaned = text.replace(/\bInvia Cordoglio\b/gi, "");
-      const noDate = cleaned.replace(/^\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4}\s*/i, "");
-      push(href, noDate, dateHint);
-    });
-  }
+    const maxDepth = rule.linkSearchDepth || 1;
 
-  if (source.type === "ultimoviaggio") {
-    $("a").each((_, el) => {
-      const text = normalizeText($(el).text());
-      if (!/^Leggi tutto\s+/i.test(text)) {
-        return;
-      }
-      const href = $(el).attr("href");
-      const title = text.replace(/^Leggi tutto\s+/i, "");
-      push(href, title, null);
-    });
-  }
-
-  if (source.type === "memorial") {
-    $("a[href*='/necrologio/']").each((_, el) => {
-      const href = $(el).attr("href");
+    $(rule.titleSelector).each((_, el) => {
       const title = normalizeText($(el).text());
-      if (!title || title.length < 4) {
-        return;
+      if (!title || title.split(" ").length < 2 || isNoiseTitle(title)) return;
+
+      let container = $(el).parent();
+      let linkHref = null;
+
+      for (let depth = 1; depth <= maxDepth && !linkHref; depth++) {
+        if (depth > 1) container = container.parent();
+        const candidate = container
+          .find("a")
+          .filter((_, a) => rule.linkTextMatch.test(normalizeText($(a).text())))
+          .first()
+          .attr("href");
+        if (candidate && (!rule.linkHrefMustMatch || rule.linkHrefMustMatch.test(candidate))) {
+          linkHref = candidate;
+        }
       }
-      const cardText = normalizeText($(el).parent().text());
-      const dateHint = extractDateFromText(cardText);
-      push(href, title, dateHint);
+
+      if (!linkHref) return;
+      if (rule.skipListPageRegex && rule.skipListPageRegex.test(linkHref)) return;
+      if (rule.blockedUrlRegex && rule.blockedUrlRegex.test(linkHref)) return;
+
+      const imgSrc = rule.listImageSrcSelector
+        ? container.find(rule.listImageSrcSelector).first().attr("src") || null
+        : null;
+      const dateHint = extractDateFromText(normalizeText(container.text()));
+      push(linkHref, title, dateHint, imgSrc);
     });
   }
 
-  if (source.type === "sanosvaldo") {
-    parseStandardLinks(source.listingRule, { cardSelector: "article, div, li" });
-  }
-
-  if (source.type === "pfasanmarco") {
-    $("a[href*='/annuncio/']").each((_, el) => {
-      const href = $(el).attr("href");
-      const title = normalizeText($(el).text());
-      if (!href || !title) {
-        return;
-      }
-      if (title.split(" ").length < 2) {
-        return;
-      }
-
-      const parentText = normalizeText($(el).closest("article, li, div").text());
-      const dateHint = extractDateFromText(parentText);
-      push(href, title, dateHint);
-    });
-  }
-
-  if (source.type === "zanette") {
-    parseStandardLinks(source.listingRule, {
-      cardSelector: ".postArticle, article, li, div",
-      extractListImage: (el) => {
-        const card = el.closest(".postArticle, article, li, div");
-        const styleImage = extractBackgroundImageUrl(card.find(".blogImg").first().attr("style"));
-        const imgSrc = card.find(".blogImg img").first().attr("src");
-        return styleImage || imgSrc || null;
-      },
-    });
-  }
-
-  if (source.type === "salamon") {
-    parseStandardLinks(source.listingRule);
-  }
-
-  if (source.type === "lapace") {
-    parseStandardLinks(source.listingRule);
-  }
-
-  if (source.type === "zanardo") {
-    parseStandardLinks(source.listingRule);
-  }
-
-  if (source.type === "sanpietrofaldon") {
-    parseStandardLinks(source.listingRule);
-  }
-
-  if (source.type === "ofdassie") {
-    parseStandardLinks(source.listingRule, {
-      cardSelector: ".necrologio-single, .col-lg-4, article, li, div",
-    });
-  }
-
-  if (source.type === "boscaia") {
-    $("h3").each((_, el) => {
-      const h3 = $(el);
-      const title = normalizeText(h3.text());
-      if (!title || title.split(" ").length < 2) {
-        return;
-      }
-      if (isNoiseTitle(title)) {
-        return;
-      }
-
-      // Cerca il link "VEDI EPIGRAFE" nel contenitore padre (o nonno)
-      let container = h3.parent();
-      let vepiHref = container.find("a").filter((_, a) => /vedi epigrafe/i.test($(a).text())).first().attr("href");
-      if (!vepiHref) {
-        container = h3.parent().parent();
-        vepiHref = container.find("a").filter((_, a) => /vedi epigrafe/i.test($(a).text())).first().attr("href");
-      }
-      if (!vepiHref || !/\/\d+\.html/.test(vepiHref)) {
-        return;
-      }
-
-      const imgSrc = container.find("img").first().attr("src");
-      const containerText = normalizeText(container.text());
-      const dateHint = extractDateFromText(containerText);
-      push(vepiHref, title, dateHint, imgSrc || null);
-    });
+  if (source.listingRule) {
+    if (source.listingRule.titleSelector) {
+      parseTitleLinks(source.listingRule);
+    } else {
+      parseStandardLinks(source.listingRule);
+    }
   }
 
   if (source.type === "necrologieonline") {
@@ -450,38 +238,6 @@ function parseListing($, source, maxItems) {
           rosario: /rosario/i.test(rosaryText) ? rosaryText : null,
         },
       });
-    });
-  }
-
-  if (source.type === "sandrin") {
-    parseStandardLinks(source.listingRule, {
-      cardSelector: "article, .post, li, div",
-      extractListImage: (el) => {
-        const card = el.closest("article, .post, li, div");
-        const imgSrc = card.find("img").first().attr("src") ||
-          card.find("[style*='background-image']").attr("style");
-        return imgSrc && !String(imgSrc).includes("background") ? imgSrc : null;
-      },
-    });
-  }
-
-  if (source.type === "roman") {
-    $("a[href*='annuncio-db.php?uuid=']").each((_, el) => {
-      const href = $(el).attr("href");
-      const title = normalizeText($(el).text());
-      if (!href || !title) {
-        return;
-      }
-      if (title.split(" ").length < 2) {
-        return;
-      }
-      if (isNoiseTitle(title)) {
-        return;
-      }
-
-      const parentText = normalizeText($(el).closest("article, li, div, section").text());
-      const dateHint = extractDateFromText(parentText);
-      push(href, title, dateHint);
     });
   }
 
@@ -530,36 +286,24 @@ function applyGeneralCutoff(text) {
 }
 
 function extractDetailBodyText($, source) {
-  if (source.id === "memorial") {
-    const memorialText = normalizeText(
-      $("#obituary-details").children().text() + " " + $("#service-details").children().text()
-    );
-    if (memorialText) {
-      return memorialText;
+  if (source.detailBodySelector) {
+    const selected = normalizeText($(source.detailBodySelector).text());
+    if (selected) {
+      return selected;
     }
-  }
-
-  if (source.id === "san_osvaldo") {
-    const bodyText = normalizeText($("article, main, .post, .entry-content, body").first().text());
-    const cutoffMatch = bodyText.match(/^(.*?)(?:\bO\.?F\.?\s*S\.?\s*Osvaldo\b)/i);
-    if (cutoffMatch && cutoffMatch[1]) {
-      return normalizeText(cutoffMatch[1]);
-    }
-    return applyGeneralCutoff(bodyText);
-  }
-
-  if (source.id === "san_pietro_faldon") {
-    const bodyText = normalizeText($("article, main, .post, .entry-content, body").first().text());
-    const cutoffMatch = bodyText.match(
-      /^(.*?)(?:\bCONTATTACI\b|\bSede di SAN PIETRO DI FELETTO\b|\bPompe Funebri Cappella Maggiore\b)/i
-    );
-    if (cutoffMatch && cutoffMatch[1]) {
-      return normalizeText(cutoffMatch[1]);
-    }
-    return applyGeneralCutoff(bodyText);
   }
 
   const rawText = normalizeText($("article, main, .post, .entry-content, body").first().text());
+
+  if (source.detailBodyCutoffRegex) {
+    const cutoffMatch = rawText.match(
+      new RegExp(`^([\\s\\S]*?)(?:${source.detailBodyCutoffRegex.source})`, "i")
+    );
+    if (cutoffMatch && cutoffMatch[1]) {
+      return normalizeText(cutoffMatch[1]);
+    }
+  }
+
   return applyGeneralCutoff(rawText);
 }
 
@@ -767,6 +511,12 @@ async function scrapeDetail(entry, source, options, ocrState, aiState) {
       : { ai_used: false };
     const entryDetails = entry.extractedDetails || {};
     funeralDate = chooseHigherDate(funeralDate, entryDetails.data_funerale, extracted.data_funerale);
+    const funeralPlace = extracted.luogo_funerale || entryDetails.luogo_funerale || null;
+    const funeralPlaceTown = findTown(funeralPlace, options.towns);
+    if (funeralPlaceTown && funeralPlaceTown !== town) {
+      console.info(`[scraper] Comune aggiornato dal luogo funerale: source=${source.id} town=${town || "n.d."} luogo_funerale=${funeralPlace} nuovo_paese=${funeralPlaceTown}`);
+      town = funeralPlaceTown;
+    }
 
     const finalTitle = personTitle || title;
     const split = splitName(finalTitle.replace(/\s+-\s+.*$/, ""));
@@ -795,7 +545,7 @@ async function scrapeDetail(entry, source, options, ocrState, aiState) {
       ora_funerale: extracted.ora_funerale || entryDetails.ora_funerale || null,
       anni: extracted.anni || entryDetails.anni || null,
       parenti: extracted.parenti || entryDetails.parenti,
-      luogo_funerale: extracted.luogo_funerale || entryDetails.luogo_funerale,
+      luogo_funerale: funeralPlace,
       rosario: extracted.rosario || entryDetails.rosario,
       ai_used: extracted.ai_used,
       ocr_used: ocrUsed,

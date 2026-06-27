@@ -2,16 +2,29 @@
 
 Questo add-on esegue scraping dei necrologi dai siti:
 
-- https://www.servizisalvador.it/necrologi/
-- https://ultimoviaggio.it/necrologi/
-- https://www.onoranzefunebrimemorial.it/necrologi/
-- https://onoranzefunebrisanosvaldo.it/necrologi/
-- https://www.pfasanmarco.it/annunci-funebri/
-- https://www.onoranzefunebrizanette.it/necrologi-cordogli-online-cordignano
-- https://www.pompefunebrisalamon.com/condoglianze-online/
-- https://www.onoranzefunebrilapaceconegliano.com/annunci-funebri/
-- https://www.agenziafunebrezanardo.it/condoglianze-online/
-- https://www.ofroman.com/lista-annunci-db.php
+| ID | Agenzia | Zona |
+| --- | --- | --- |
+| `servizi_salvador` | Servizi Salvador | Treviso |
+| `ultimoviaggio` | Ultimo Viaggio | Treviso |
+| `memorial` | Onoranze Funebri Memorial | Conegliano, San Vendemiano, Vittorio Veneto |
+| `san_osvaldo` | San Osvaldo | Conegliano |
+| `pfa_san_marco` | PFA San Marco | Conegliano |
+| `zanette` | Onoranze Funebri Zanette | Cordignano |
+| `salamon` | Pompe Funebri Salamon | Conegliano |
+| `lapace_conegliano` | Onoranze Funebri La Pace Conegliano | Conegliano |
+| `zanardo` | Agenzia Funebre Zanardo | Conegliano |
+| `roman` | Onoranze Funebri Roman | Conegliano, San Vendemiano |
+| `sandrin` | Onoranze Funebri Sandrin | zona Treviso |
+| `boscaia` | Onoranze Funebri Boscaia | Oderzo |
+| `san_pietro_faldon` | Onoranze Funebri San Pietro Faldon | Cappella Maggiore, Follina |
+| `pederiva` | Onoranze Funebri Pederiva | Farra di Soligo, Pieve di Soligo, Follina, Tarzo |
+| `denadai` | Onoranze Funebri De Nadai | San Biagio di Callalta, Carbonera |
+| `cof_treviso` | Casa Funeraria COF | Treviso |
+| `sat_sacile` | Onoranze Funebri SAT | Sacile, Fontanafredda, Vigonovo, Caneva |
+| `lamemoria_conegliano` | Onoranze Funebri La Memoria | Conegliano, Susegana, San Pietro di Feletto |
+| `sanmarco_vv` | Onoranze Funebri San Marco | Vittorio Veneto |
+| `necrologieonline_tarzo` | NecrologieOnline Tarzo | Tarzo |
+| `ofdassie` | Onoranze Funebri D'Assie | Vittorio Veneto |
 
 Filtra i risultati in base ai paesi configurati (default: Orsago, Cordignano, Godega, San Fior) e salva:
 
@@ -52,6 +65,8 @@ Porta: `8099`
 - `GET /web?town=Orsago&summary=false&include_hidden=true` - Vista compatta includendo necrologi vecchi
 - `POST /refresh` - Rescan di tutte le sorgenti
 - `POST /refresh-source/:sourceId` - Rescan di una singola sorgente
+- `POST /mqtt-republish` - Ripubblica stato MQTT (summary + topic per paese)
+- `POST /mqtt-republish?simulate_new=true` - Ripubblica tutto + invia topic `/new` con tutti i necrologi visibili (utile per testare automazioni)
 
 Il parametro `sourceId` può essere uno di:
   - `servizi_salvador`
@@ -64,6 +79,17 @@ Il parametro `sourceId` può essere uno di:
   - `lapace_conegliano`
   - `zanardo`
   - `roman`
+  - `sandrin`
+  - `boscaia`
+  - `san_pietro_faldon`
+  - `pederiva`
+  - `denadai`
+  - `cof_treviso`
+  - `sat_sacile`
+  - `lamemoria_conegliano`
+  - `sanmarco_vv`
+  - `necrologieonline_tarzo`
+  - `ofdassie`
 
 Le immagini salvate sono pubblicate anche tramite:
 
@@ -300,6 +326,98 @@ Con MQTT abilitato, l'add-on pubblica:
 | `sensor.necrologi_san_fior` | Necrologi San Fior | count per paese |
 
 > I sensori per paese dipendono dalla lista `towns` in configurazione. Gli entity ID HA vengono assegnati automaticamente da HA e possono avere un suffisso numerico se già esistenti.
+
+### Attributi dei sensori per paese
+
+I sensori per paese, ad esempio `sensor.necrologi_orsago`, pubblicano anche attributi JSON con:
+
+- `count`
+- `updated_at`
+- `latest_downloaded_at`
+- `items`
+
+Ogni elemento di `items` contiene i principali dati del necrologio, inclusi:
+
+- `full_name`
+- `paese`
+- `data_funerale`
+- `ora_funerale`
+- `luogo_funerale`
+- `source`
+- `obituary_url`
+- `foto_api_url`
+- `downloaded_at`
+
+Esempio template:
+
+```jinja2
+{{ state_attr('sensor.necrologi_orsago', 'items') }}
+```
+
+### Esempio automazione Home Assistant: notifica nuovi necrologi di Orsago
+
+Per le notifiche conviene usare il topic MQTT `necrologi_zona_tv/new`, perché è pensato apposta per i nuovi annunci e non dipende dal confronto tra attributi del sensore.
+
+Questa automazione invia una notifica solo quando nel payload arrivano nuovi necrologi con `paese: Orsago`.
+
+```yaml
+automation:
+  - id: necrologi_notifica_orsago_mqtt
+    alias: Necrologi - Notifica Orsago
+    mode: queued
+    triggers:
+      - trigger: mqtt
+        topic: necrologi_zona_tv/new
+    variables:
+      orsago_items: >-
+        {{ (trigger.payload_json.items | default([], true))
+           | selectattr('paese', 'defined')
+           | selectattr('paese', 'equalto', 'Orsago')
+           | list }}
+      txt: >
+        {% if orsago_items | count == 0 %}
+          Nessun nuovo necrologio per Orsago.
+        {% else %}
+          {% for n in orsago_items[:5] %}
+          • {{ n.full_name }}{% if n.data_funerale %} - funerale {{ n.data_funerale }}{% endif %}{% if n.ora_funerale %} alle {{ n.ora_funerale }}{% endif %}
+          {% endfor %}
+          {% if (orsago_items | count) > 5 %}
+          ...e altri {{ (orsago_items | count) - 5 }}
+          {% endif %}
+        {% endif %}
+      first_image: >-
+        {{ (orsago_items[0].foto_api_url | default('', true)) if (orsago_items | count > 0) else '' }}
+    conditions:
+      - condition: template
+        value_template: "{{ orsago_items | count > 0 }}"
+    actions:
+      - action: persistent_notification.create
+        data:
+          title: "Necrologi Orsago"
+          message: "{{ txt }}"
+      - action: notify.notify
+        data:
+          title: "Necrologi Orsago"
+          message: "{{ txt }}"
+```
+
+Se vuoi usare anche l'immagine nella notifica, dipende dal servizio `notify` che usi. Per esempio con Companion App puoi passare l'URL completo dell'immagine:
+
+```yaml
+      - action: notify.mobile_app_TUO_TELEFONO
+        data:
+          title: "Necrologi Orsago"
+          message: "{{ txt }}"
+          data:
+            image: >-
+              {{ ('http://IP_DEL_TUO_HA:8099' ~ first_image) if first_image else '' }}
+```
+
+Il sensore `sensor.necrologi_orsago` resta comunque utile per dashboard, card e template, ad esempio:
+
+```jinja2
+{{ state_attr('sensor.necrologi_orsago', 'items')[0].foto_api_url }}
+```
 
 ## Estrazione AI con agente Home Assistant
 
