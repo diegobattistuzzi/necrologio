@@ -39,7 +39,7 @@ Filtra i risultati in base ai paesi configurati (default: Orsago, Cordignano, Go
 
 Inoltre, quando `save_images: true`, scarica le immagini in locale.
 
-Quando `enable_ocr: true`, applica OCR locale come fallback (attualmente su Ultimo Viaggio, Zanette, Servizi Salvador, Salamon, La Pace Conegliano, Zanardo e Roman) per provare a recuperare `paese` e `data_funerale` dai contenuti grafici.
+Quando `enable_ocr: true`, applica OCR locale come fallback sulle sorgenti con immagini di epigrafi (flag `ocrEligible` in `sources.js`): Servizi Salvador, Ultimo Viaggio, San Pietro Faldon, Zanette, Salamon, La Pace Conegliano, Zanardo, Roman, Sandrin, Boscaia, Pederiva, De Nadai, COF Treviso, SAT Sacile, San Marco VV, OF D'Assie. Serve a recuperare `paese` e `data_funerale` dai contenuti grafici.
 
 Quando `enable_ai_extraction: true`, usa anche l'agente AI configurato in Home Assistant (API `conversation.process`) per migliorare l'estrazione di:
 
